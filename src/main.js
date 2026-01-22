@@ -107,7 +107,7 @@ const initializeGlobalKeyListener = () => {
   });
 
   console.log(
-    "Global keyboard listener started - listening for Ctrl+Win globally"
+    "Global keyboard listener started - listening for Ctrl+Win globally",
   );
 };
 
@@ -141,14 +141,9 @@ const createWindow = () => {
   mainWindowRef = mainWindow;
 
   // Set up click-through toggle handlers
-  ipcMain.on("enable-mouse", () => {
-    mainWindow.setIgnoreMouseEvents(false);
-    mainWindow.focus(); // Force focus to keep window on top
-  });
-
-  ipcMain.on("disable-mouse", () => {
-    mainWindow.setIgnoreMouseEvents(true, { forward: true });
-  });
+  // Click-through handling removed — window will receive mouse events.
+  // Renderer may still send 'enable-mouse'/'disable-mouse' IPCs; handlers
+  // were intentionally removed so mouse events are always enabled here.
 
   // Set up quit handler
   ipcMain.on("quit-app", () => {
@@ -160,8 +155,7 @@ const createWindow = () => {
     mainWindowRef = null;
   });
 
-  // Start with click-through enabled (window is click-through by default)
-  mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  // Click-through disabled: keep window interactive by default.
 
   // Remove the menu bar (File, Edit, View, etc.)
   Menu.setApplicationMenu(null);
@@ -171,7 +165,7 @@ const createWindow = () => {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
     );
   }
 

@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import "./index.css";
 import Notch from "./components/notch";
+import startupSound from "./assets/verbalpreset/startup.wav";
 
 const App = () => {
   const [taskbarHeight, setTaskbarHeight] = useState(0);
@@ -21,6 +22,17 @@ const App = () => {
     };
 
     getTaskbarHeight();
+  }, []);
+
+  // Play startup sound once when app mounts
+  useEffect(() => {
+    try {
+      const audio = new Audio(startupSound);
+      audio.currentTime = 0;
+      audio.play().catch((err) => console.error("Startup sound error:", err));
+    } catch (err) {
+      console.error("Failed to play startup sound:", err);
+    }
   }, []);
 
   const handleMouseEnter = () => {
