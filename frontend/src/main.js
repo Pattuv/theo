@@ -303,7 +303,7 @@ const createWindow = () => {
   let clickThroughInterval = null;
   const NOTCH_POLL_MS = 80;
 
-  ipcMain.handle("set-click-through", (_event, { enabled }) => {
+  ipcMain.handle("set-click-through", (_event, { enabled, agentMode }) => {
     clickThroughEnabled = Boolean(enabled);
     if (clickThroughInterval) {
       clearInterval(clickThroughInterval);
@@ -312,6 +312,11 @@ const createWindow = () => {
     if (!clickThroughEnabled) {
       mainWindow.setIgnoreMouseEvents(false);
       return { ok: true, enabled: false };
+    }
+    // turn off lock down for ai runs
+    if (agentMode) {
+      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+      return { ok: true, enabled: true };
     }
     const check = () => {
       if (!mainWindowRef || mainWindowRef.isDestroyed()) return;
@@ -378,7 +383,7 @@ const createWindow = () => {
 app.whenReady().then(() => {
   createWindow();
 
-  // Start key listener in background so a slow/hanging spawn doesn't block the window
+  // start key listener in background so a slow/hanging spawn doesn't block the window
   initializeGlobalKeyListener().catch((err) => {
     console.error("[STT] Global key listener failed:", err.message || err);
     console.warn("[STT] Ctrl+Win shortcut will not work. App will still run.");

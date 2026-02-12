@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import "./index.css";
+import "./ai-overlay.css";
 import Notch from "./components/notch";
 import startupSound from "./assets/verbalpreset/startup2.wav";
 import { initPushToTalk } from "./utils/sttUtil";
@@ -61,6 +62,19 @@ const App = () => {
     getTaskbarHeight();
   }, []);
 
+  const [aiActive, setAiActive] = useState(false);
+
+  useEffect(() => {
+    const onAiGo = () => setAiActive(true);
+    const onAiDone = () => setAiActive(false);
+    window.addEventListener("ai-go", onAiGo);
+    window.addEventListener("ai-done", onAiDone);
+    return () => {
+      window.removeEventListener("ai-go", onAiGo);
+      window.removeEventListener("ai-done", onAiDone);
+    };
+  }, []);
+
   useEffect(() => {
     const playStartup = async () => {
       const audio = new Audio(startupSound);
@@ -83,6 +97,10 @@ const App = () => {
 
   return (
     <div className="pointer-events-auto">
+      <div
+        className={`ai-active-overlay ${aiActive ? "visible" : ""}`}
+        aria-hidden="true"
+      />
       <Notch taskbarHeight={taskbarHeight} />
     </div>
   );
