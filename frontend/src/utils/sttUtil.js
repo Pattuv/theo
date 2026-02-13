@@ -1,6 +1,5 @@
 import { sttFallback } from "./sttFallback.js";
 import { aiGO } from "./workflow.js";
-import { getCachedSettings } from "./settings.js";
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -47,14 +46,9 @@ export function initPushToTalk() {
         stream.getTracks().forEach((track) => track.stop());
       }
 
-      const selectedMicId = getCachedSettings()?.audio?.microphoneDeviceId;
-
       // Request microphone access
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          ...(selectedMicId && selectedMicId !== "system-default"
-            ? { deviceId: { exact: selectedMicId } }
-            : {}),
           echoCancellation: true,
           noiseSuppression: true,
           sampleRate: 16000,

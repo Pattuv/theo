@@ -20,7 +20,6 @@ dotenv.config({ path: join(__dirname, "../../../.env") });
 
 import { app, BrowserWindow, Menu, screen, ipcMain, shell } from "electron";
 import path from "node:path";
-import { promises as fs } from "node:fs";
 import { createRequire } from "node:module";
 import started from "electron-squirrel-startup";
 import { GlobalKeyboardListener } from "node-global-key-listener";
@@ -95,9 +94,6 @@ const updateSettingsByPath = (settings, settingPath, value) => {
 
 const isInputLocked = () => inputLockCount > 0;
 
-const shouldAllowShortcutWithHumanInput = () =>
-  Boolean(activeSettings?.general?.allowShortcutWithHumanInput);
-
 if (started) {
   app.quit();
 }
@@ -117,41 +113,6 @@ ipcMain.handle("open-external", (_event, url) => {
 ipcMain.handle("get-screen-size", () => {
   const { width, height } = screen.getPrimaryDisplay().size;
   return { width, height };
-});
-
-ipcMain.handle("settings:get", async () => {
-  const settings = await readSettings();
-  activeSettings = settings;
-  return settings;
-});
-
-ipcMain.handle("settings:update", async (_event, payload) => {
-  const current = await readSettings();
-  const updated = updateSettingsByPath(current, payload?.path, payload?.value);
-  activeSettings = updated;
-
-  if (payload?.path === "general.launchOnStartup") {
-    try {
-      app.setLoginItemSettings({
-        openAtLogin: Boolean(payload?.value),
-      });
-    } catch (err) {
-      console.error("[Settings] Failed to update launch-on-startup:", err);
-    }
-  }
-
-  return writeSettings(updated);
-});
-
-ipcMain.handle("settings:list-displays", () => {
-  const primaryId = screen.getPrimaryDisplay().id;
-  const displays = screen.getAllDisplays().map((display) => ({
-    id: String(display.id),
-    label: display.label || `Display ${display.id}`,
-    isPrimary: display.id === primaryId,
-    resolution: `${display.size.width}x${display.size.height}`,
-  }));
-  return displays;
 });
 
 // Renderer-controlled input lock for startup/fallback audio and ai workflow.
@@ -240,21 +201,35 @@ const COOLDOWN_AFTER_RELEASE_MS = 2000;
 let lastTriggerAt = 0;
 let lastReleaseAt = 0;
 
+// Output playing: TTS is playing. Allow Ctrl+Win to interrupt and ask new prompt.
+// For AGENT mode, we only set this after script is done (when fetch returns).
+let outputPlaying = false;
+
 // Global keyboard listener
 let gkl = null;
 
+ipcMain.handle("set-output-playing", (_event, payload) => {
+  outputPlaying = Boolean(payload?.playing);
+  return { ok: true };
+});
+
 const handleCtrlWinPress = () => {
   const now = Date.now();
-  if (clickThroughEnabled && !shouldAllowShortcutWithHumanInput()) return;
+  if (clickThroughEnabled) return;
   if (isInputLocked()) return;
   if (now - lastTriggerAt < TRIGGER_LOCKOUT_MS) return;
-  if (lastReleaseAt > 0 && now - lastReleaseAt < COOLDOWN_AFTER_RELEASE_MS)
+  // Bypass cooldown when TTS is playing (user can interrupt to ask new prompt)
+  const canInterrupt = outputPlaying;
+  if (!canInterrupt && lastReleaseAt > 0 && now - lastReleaseAt < COOLDOWN_AFTER_RELEASE_MS)
     return;
   if (!bothKeysReleased) return;
 
   ctrlWinPressed = true;
   bothKeysReleased = false;
   lastTriggerAt = now;
+  // Always stop TTS when Ctrl+Win pressed - no matter what
+  fetch("http://127.0.0.1:5000/stop-tts", { method: "POST" }).catch(() => {});
+  if (outputPlaying) outputPlaying = false;
   console.log("[STT] Ctrl+Win pressed - sending ctrl-win-key-down to renderer");
 
   if (mainWindowRef?.webContents) {
@@ -265,7 +240,7 @@ const handleCtrlWinPress = () => {
 };
 
 const handleCtrlWinRelease = () => {
-  if (clickThroughEnabled && !shouldAllowShortcutWithHumanInput()) return;
+  if (clickThroughEnabled) return;
   if (isInputLocked()) return;
   if (!ctrlWinPressed) return;
 
@@ -323,6 +298,12 @@ const initializeGlobalKeyListener = async () => {
   await gkl.addListener((e, down) => {
     const ctrlHeld = CTRL_NAMES.some((k) => down[k]);
     const winHeld = WIN_NAMES.some((k) => down[k]);
+
+    // Ctrl alone (no Win): stop TTS response
+    if (e.state === "DOWN" && isCtrlKey(e.name) && ctrlHeld && !winHeld) {
+      fetch("http://127.0.0.1:5000/stop-tts", { method: "POST" }).catch(() => {});
+      if (outputPlaying) outputPlaying = false;
+    }
 
     if (
       e.state === "UP" &&
@@ -396,8 +377,24 @@ const createWindow = () => {
 
   mainWindowRef = mainWindow;
 
-  // IPC: quit
-  ipcMain.on("quit-app", () => app.quit());
+  // IPC: quit - shutdown Flask backend then quit Electron
+  ipcMain.on("quit-app", () => {
+    const shutdownFlask = async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 1000);
+        await fetch("http://127.0.0.1:5000/shutdown", {
+          method: "POST",
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+      } catch (_) {
+        // Backend may not be running - continue to quit
+      }
+      app.quit();
+    };
+    shutdownFlask();
+  });
 
   // Click-through: overlay ignores mouse except over notch (notch stays clickable)
   let notchBounds = null; // { x, y, width, height } in window coordinates
@@ -481,8 +478,7 @@ const createWindow = () => {
   });
 };
 
-app.whenReady().then(async () => {
-  activeSettings = await readSettings();
+app.whenReady().then(() => {
   createWindow();
 
   // start key listener in background so a slow/hanging spawn doesn't block the window

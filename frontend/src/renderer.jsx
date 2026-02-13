@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { useEffect, useState, useRef } from "react";
 import "./index.css";
 import "./ai-overlay.css";
 import Notch from "./components/notch";
 import startupSound from "./assets/verbalpreset/startup2.wav";
+import loadingSound from "./assets/loading.mp3";
 import { initPushToTalk } from "./utils/sttUtil";
-import { getCachedSettings, loadSettings } from "./utils/settings";
 
 async function setInputLock(lock) {
   if (!window.electron?.ipcRenderer?.invoke) return;
@@ -33,14 +33,13 @@ const App = () => {
 
   // Initialize app - retry if electron isn't ready yet (preload can lag)
   useEffect(() => {
-    async function setupPushToTalk() {
+    function setupPushToTalk() {
       if (!window.electron?.ipcRenderer) {
         console.warn("[STT] ipcRenderer not ready, retrying in 500ms...");
         setTimeout(setupPushToTalk, 500);
         return;
       }
       try {
-        await loadSettings();
         initPushToTalk();
         console.log("[STT] Push-to-talk initialized - hold Ctrl+Win to record");
       } catch (err) {
@@ -65,6 +64,8 @@ const App = () => {
   }, []);
 
   const [aiActive, setAiActive] = useState(false);
+  const loadingLoopRef = useRef(null);
+  const loadingActiveRef = useRef(false);
 
   useEffect(() => {
     const onAiGo = () => setAiActive(true);
@@ -77,22 +78,69 @@ const App = () => {
     };
   }, []);
 
+  // Loading sound: loop when AI processing starts, stop when TTS starts or ai-done
+  useEffect(() => {
+    const LOOP_DELAY_MS = 500;
+
+    const stopLoadingSound = () => {
+      loadingActiveRef.current = false;
+      if (loadingLoopRef.current) {
+        clearTimeout(loadingLoopRef.current);
+        loadingLoopRef.current = null;
+      }
+    };
+
+    const runLoadingLoop = () => {
+      try {
+        if (!loadingActiveRef.current) return;
+        const audio = new Audio(loadingSound);
+        audio.play().catch((err) => console.error("[Loading] Play error:", err));
+        const onEnded = () => {
+          audio.removeEventListener("ended", onEnded);
+          audio.removeEventListener("error", onEnded);
+          if (!loadingActiveRef.current) return;
+          loadingLoopRef.current = setTimeout(runLoadingLoop, LOOP_DELAY_MS);
+        };
+        audio.addEventListener("ended", onEnded);
+        audio.addEventListener("error", onEnded);
+      } catch (err) {
+        console.error("[Loading] Loop error:", err);
+      }
+    };
+
+    const onAiLoadingStart = () => {
+      try {
+        loadingActiveRef.current = true;
+        runLoadingLoop();
+      } catch (err) {
+        console.error("[Loading] Start error:", err);
+      }
+    };
+
+    const onAiDone = () => {
+      stopLoadingSound();
+    };
+
+    const onOutputPlayingChanged = ({ detail }) => {
+      if (detail?.playing) stopLoadingSound();
+    };
+
+    window.addEventListener("ai-loading-start", onAiLoadingStart);
+    window.addEventListener("ai-done", onAiDone);
+    window.addEventListener("output-playing-changed", onOutputPlayingChanged);
+
+    return () => {
+      stopLoadingSound();
+      window.removeEventListener("ai-loading-start", onAiLoadingStart);
+      window.removeEventListener("ai-done", onAiDone);
+      window.removeEventListener("output-playing-changed", onOutputPlayingChanged);
+    };
+  }, []);
+
   useEffect(() => {
     const playStartup = async () => {
       const audio = new Audio(startupSound);
       audio.currentTime = 0;
-      const speakerDeviceId = getCachedSettings()?.audio?.speakerDeviceId;
-      if (
-        speakerDeviceId &&
-        speakerDeviceId !== "system-default" &&
-        typeof audio.setSinkId === "function"
-      ) {
-        try {
-          await audio.setSinkId(speakerDeviceId);
-        } catch (err) {
-          console.warn("[Settings] Failed to route startup audio to selected speaker:", err);
-        }
-      }
       await setInputLock(true);
       try {
         await audio.play();

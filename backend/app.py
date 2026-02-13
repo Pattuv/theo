@@ -1,6 +1,8 @@
 import io
 import logging
 import threading
+from datetime import datetime
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,7 +16,7 @@ from services.aiService.aiService import (
     run_main_llm,
 )
 from services.scriptClient.scriptClient import run_script
-from services.TTS.ttsClient import speak_text
+from services.TTS.ttsClient import speak_text, stop_playback
 from utils.audioFeedback.audioFeedback import play_image_error_sound
 from utils.audioFeedback.audioFeedback import play_warning_sound
 from utils.imageProcessor.imageProcessor import image_processor
@@ -34,6 +36,31 @@ SESSION_MEMORY: list[dict] = []
 MAX_MEMORY_TURNS = 12  # 6 turns = 6 user + 6 assistant messages combined together
 
 
+def _is_datetime_query(user_input: str) -> bool:
+    text = (user_input or "").strip().lower()
+    patterns = (
+        "what time",
+        "current time",
+        "time is it",
+        "what date",
+        "current date",
+        "what day",
+        "day is it",
+        "day of the week",
+        "today's date",
+        "todays date",
+    )
+    return any(p in text for p in patterns)
+
+
+def _build_datetime_response() -> str:
+    now = datetime.now()
+    return (
+        f"Today is {now.strftime('%A')}, {now.strftime('%B %d, %Y')}. "
+        f"The current time is {now.strftime('%I:%M %p').lstrip('0')}."
+    )
+
+
 def _normalize_classification(raw: str) -> str:
     """Extract classification from classifier output; tolerates extra text/whitespace."""
     s = (raw or "").strip().upper()
@@ -50,15 +77,13 @@ def _trim_memory() -> None:
         SESSION_MEMORY[:] = SESSION_MEMORY[-MAX_MEMORY_TURNS:]
 
 
-def aiGO(user_input: str, classification: str, response_mode: str = "default") -> dict:
+def aiGO(user_input: str, classification: str) -> dict:
     """
     Orchestrate the full AI workflow: screenshot -> LLM -> parse -> script (if AGENT) -> TTS.
     Returns structured result dict for route response.
     """
     if classification not in ("---CHAT---", "---AGENT---"):
         return {"ok": False, "error": f"Invalid classification: {classification}"}
-    if response_mode not in ("default", "concise"):
-        return {"ok": False, "error": f"Invalid response_mode: {response_mode}"}
 
     # screenshot
     try:
@@ -93,8 +118,7 @@ def aiGO(user_input: str, classification: str, response_mode: str = "default") -
             user_text=user_input,
             image_bytes=image_bytes,
             meta=meta,
-            memory_messages=SESSION_MEMORY[:-1],
-            response_mode=response_mode,
+            memory_messages=SESSION_MEMORY[:-1],  
         )
         raw_text = run_main_llm(instructions=instructions, input_items=input_items)
 
@@ -197,7 +221,6 @@ def ai_classify():
     if not user_input or not str(user_input).strip():
         return jsonify({"ok": False, "error": "user_input required"}), 400
     user_input = str(user_input).strip()
-
     raw_classification = llmclassifier(user_input)
     classification = _normalize_classification(raw_classification)
     return jsonify({"ok": True, "classification": classification}), 200
@@ -210,10 +233,18 @@ def ai():
         return jsonify({"ok": False, "error": "user_input is required and must be non-empty"}), 400
 
     user_input = str(user_input).strip()
-    response_mode_param = request.args.get("response_mode", "default")
-    response_mode = response_mode_param.strip().lower() if response_mode_param else "default"
-    if response_mode not in ("default", "concise"):
-        response_mode = "default"
+
+    # Fast path for day/date/time requests (no classifier/main model round-trip).
+    if _is_datetime_query(user_input):
+        theo_response = _build_datetime_response()
+        speak_text(theo_response, async_play=False)
+        return jsonify({
+            "ok": True,
+            "classification": "---CHAT---",
+            "script_ok": None,
+            "theo_response": theo_response,
+        }), 200
+
     classification_param = request.args.get("classification")
     if classification_param and classification_param.strip() in ("---CHAT---", "---AGENT---", "---UNSAFE---"):
         classification = classification_param.strip()
@@ -226,7 +257,7 @@ def ai():
         return jsonify({"ok": False, "classification": classification}), 400
 
     if classification in ("---CHAT---", "---AGENT---"):
-        result = aiGO(user_input, classification, response_mode=response_mode)
+        result = aiGO(user_input, classification)
         if result.get("ok"):
             return jsonify({
                 "ok": True,
@@ -244,6 +275,20 @@ def ai():
 
     # Fallback: unknown classification
     return jsonify({"ok": False, "error": "Unknown classification", "classification": classification}), 400
+
+
+@app.route("/stop-tts", methods=["POST"])
+def stop_tts():
+    """Stop current TTS playback (called when user interrupts with Ctrl+Win)."""
+    stop_playback()
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/shutdown", methods=["POST"])
+def shutdown():
+    """Shutdown the Flask server (called by Electron on quit)."""
+    logger.info("Shutdown requested by Electron")
+    os._exit(0)
 
 
 if __name__ == "__main__":

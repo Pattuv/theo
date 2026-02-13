@@ -32,12 +32,9 @@ def build_main_input(
     image_bytes: bytes,
     meta: dict,
     memory_messages: list[dict],
-    response_mode: str = "default",
 ) -> list[dict]:
     if classification not in ("---CHAT---", "---AGENT---"):
         raise ValueError(f"Invalid classification: {classification}")
-    if response_mode not in ("default", "concise"):
-        raise ValueError(f"Invalid response_mode: {response_mode}")
 
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
     image_data_url = f"data:image/png;base64,{image_b64}"
@@ -53,19 +50,11 @@ def build_main_input(
         f"scale={scale}. Use these coordinates for PyAutoGUI when generating agent scripts."
     )
 
-    response_style_text = (
-        "Response style: concise, low-verbosity, and action-focused. Keep wording short and practical."
-        if response_mode == "concise"
-        else "Response style: normal detail."
-    )
-
     user_content = (
         f"Classification: {classification}\n\n"
         f"User prompt: {user_text}\n\n"
-        f"{response_style_text}\n\n"
         f"{meta_text}"
     )
-
 
 
     input_items: list[dict] = []
