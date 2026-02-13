@@ -10,6 +10,7 @@ function Notch({ taskbarHeight = 0 }) {
   const [isCtrlWinHeld, setIsCtrlWinHeld] = useState(false);
   const [helpCenterOpen, setHelpCenterOpen] = useState(false);
   const [clickThroughEnabled, setClickThroughEnabled] = useState(false);
+  const [outputPlaying, setOutputPlaying] = useState(false);
   const [screenSize, setScreenSize] = useState({ width: 1920, height: 1080 });
   const helpCenterDialogRef = useRef(null);
   const humanInputConfirmRef = useRef(null);
@@ -69,7 +70,8 @@ function Notch({ taskbarHeight = 0 }) {
         return;
       }
       const now = Date.now();
-      if (now - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS) return;
+      const canInterrupt = outputPlaying;
+      if (!canInterrupt && now - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS) return;
       if (isHoldingRef.current) return;
 
       isHoldingRef.current = true;
@@ -107,14 +109,20 @@ function Notch({ taskbarHeight = 0 }) {
       setIsCtrlWinHeld(false);
     };
 
+    const handleOutputPlayingChanged = ({ detail }) => {
+      setOutputPlaying(Boolean(detail?.playing));
+    };
+
     window.electron.ipcRenderer.on("ctrl-win-key-down", handleCtrlWinKeyDown);
     window.electron.ipcRenderer.on("ctrl-win-key-up", handleCtrlWinKeyUp);
     window.electron.ipcRenderer.on(
       "input-lock-changed",
       handleInputLockChanged,
     );
+    window.addEventListener("output-playing-changed", handleOutputPlayingChanged);
 
     return () => {
+      window.removeEventListener("output-playing-changed", handleOutputPlayingChanged);
       window.electron.ipcRenderer.removeListener(
         "ctrl-win-key-down",
         handleCtrlWinKeyDown,
@@ -178,7 +186,8 @@ function Notch({ taskbarHeight = 0 }) {
       if (!(e.ctrlKey && (e.metaKey || e.key === "Meta" || e.key === "Win")))
         return;
 
-      if (Date.now() - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS) return;
+      const canInterrupt = outputPlaying;
+      if (!canInterrupt && Date.now() - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS) return;
 
       isHoldingRef.current = true;
       setIsCtrlWinHeld(true);
@@ -218,7 +227,7 @@ function Notch({ taskbarHeight = 0 }) {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [clickThroughEnabled]);
+  }, [clickThroughEnabled, outputPlaying]);
 
   return (
     <div

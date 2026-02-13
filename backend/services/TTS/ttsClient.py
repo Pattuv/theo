@@ -38,6 +38,15 @@ def _play_wav(path: Path, async_play: bool = False) -> None:
         _do_play()
 
 
+def stop_playback() -> None:
+    """Stop any currently playing TTS audio."""
+    try:
+        import sounddevice as sd
+        sd.stop()
+    except Exception as e:
+        logger.warning("Could not stop TTS playback: %s", e)
+
+
 def speak_text(text: str, out_path: Optional[Path] = None, async_play: bool = False) -> Path:
     #Generate TTS for text and play it back.
     audio_path = synthesize_tts(text, out_path=out_path)

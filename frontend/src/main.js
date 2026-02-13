@@ -139,21 +139,35 @@ const COOLDOWN_AFTER_RELEASE_MS = 2000;
 let lastTriggerAt = 0;
 let lastReleaseAt = 0;
 
+// Output playing: TTS is playing. Allow Ctrl+Win to interrupt and ask new prompt.
+// For AGENT mode, we only set this after script is done (when fetch returns).
+let outputPlaying = false;
+
 // Global keyboard listener
 let gkl = null;
+
+ipcMain.handle("set-output-playing", (_event, payload) => {
+  outputPlaying = Boolean(payload?.playing);
+  return { ok: true };
+});
 
 const handleCtrlWinPress = () => {
   const now = Date.now();
   if (clickThroughEnabled) return;
   if (isInputLocked()) return;
   if (now - lastTriggerAt < TRIGGER_LOCKOUT_MS) return;
-  if (lastReleaseAt > 0 && now - lastReleaseAt < COOLDOWN_AFTER_RELEASE_MS)
+  // Bypass cooldown when TTS is playing (user can interrupt to ask new prompt)
+  const canInterrupt = outputPlaying;
+  if (!canInterrupt && lastReleaseAt > 0 && now - lastReleaseAt < COOLDOWN_AFTER_RELEASE_MS)
     return;
   if (!bothKeysReleased) return;
 
   ctrlWinPressed = true;
   bothKeysReleased = false;
   lastTriggerAt = now;
+  // Always stop TTS when Ctrl+Win pressed - no matter what
+  fetch("http://127.0.0.1:5000/stop-tts", { method: "POST" }).catch(() => {});
+  if (outputPlaying) outputPlaying = false;
   console.log("[STT] Ctrl+Win pressed - sending ctrl-win-key-down to renderer");
 
   if (mainWindowRef?.webContents) {
@@ -222,6 +236,12 @@ const initializeGlobalKeyListener = async () => {
   await gkl.addListener((e, down) => {
     const ctrlHeld = CTRL_NAMES.some((k) => down[k]);
     const winHeld = WIN_NAMES.some((k) => down[k]);
+
+    // Ctrl alone (no Win): stop TTS response
+    if (e.state === "DOWN" && isCtrlKey(e.name) && ctrlHeld && !winHeld) {
+      fetch("http://127.0.0.1:5000/stop-tts", { method: "POST" }).catch(() => {});
+      if (outputPlaying) outputPlaying = false;
+    }
 
     if (
       e.state === "UP" &&
@@ -295,8 +315,24 @@ const createWindow = () => {
 
   mainWindowRef = mainWindow;
 
-  // IPC: quit
-  ipcMain.on("quit-app", () => app.quit());
+  // IPC: quit - shutdown Flask backend then quit Electron
+  ipcMain.on("quit-app", () => {
+    const shutdownFlask = async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 1000);
+        await fetch("http://127.0.0.1:5000/shutdown", {
+          method: "POST",
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+      } catch (_) {
+        // Backend may not be running - continue to quit
+      }
+      app.quit();
+    };
+    shutdownFlask();
+  });
 
   // Click-through: overlay ignores mouse except over notch (notch stays clickable)
   let notchBounds = null; // { x, y, width, height } in window coordinates

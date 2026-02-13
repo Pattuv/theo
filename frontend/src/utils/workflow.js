@@ -20,8 +20,19 @@ async function setClickThrough(enabled) {
   }
 }
 
+async function setOutputPlaying(playing) {
+  window.dispatchEvent(new CustomEvent("output-playing-changed", { detail: { playing } }));
+  if (!window.electron?.ipcRenderer?.invoke) return;
+  try {
+    await window.electron.ipcRenderer.invoke("set-output-playing", { playing });
+  } catch (err) {
+    console.error("[AI] Failed to set output-playing:", err);
+  }
+}
+
 export async function aiGO(text) {
   if (!text) return;
+  await setOutputPlaying(false);
   await setInputLock(true);
   let classification = "---CHAT---";
   try {
@@ -39,8 +50,11 @@ export async function aiGO(text) {
     }
 
     const url = `${AI_URL}?user_input=${encodeURIComponent(text)}&classification=${encodeURIComponent(classification)}`;
+    window.dispatchEvent(new CustomEvent("ai-loading-start"));
     const response = await fetch(url);
-    if (!response.ok) {
+    if (response.ok) {
+      await setOutputPlaying(true);
+    } else {
       const body = await response.text();
       console.error("[AI] Request failed:", response.status, body);
     }
