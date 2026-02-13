@@ -93,65 +93,6 @@ const updateSettingsByPath = (settings, settingPath, value) => {
   return mergeSettings(draft);
 };
 
-const DEFAULT_SETTINGS = {
-  audio: {
-    microphoneDeviceId: "system-default",
-    speakerDeviceId: "system-default",
-  },
-  display: {
-    targetDisplayId: "system-primary",
-  },
-  general: {
-    launchOnStartup: false,
-    clickThroughByDefault: false,
-  },
-};
-
-const settingsPath = () => path.join(app.getPath("userData"), "settings.json");
-
-const mergeSettings = (partial = {}) => ({
-  ...DEFAULT_SETTINGS,
-  ...partial,
-  audio: { ...DEFAULT_SETTINGS.audio, ...(partial.audio || {}) },
-  display: { ...DEFAULT_SETTINGS.display, ...(partial.display || {}) },
-  general: { ...DEFAULT_SETTINGS.general, ...(partial.general || {}) },
-});
-
-const readSettings = async () => {
-  try {
-    const raw = await fs.readFile(settingsPath(), "utf8");
-    return mergeSettings(JSON.parse(raw));
-  } catch (err) {
-    if (err.code !== "ENOENT") {
-      console.error("[Settings] Failed to read settings:", err);
-    }
-    return mergeSettings();
-  }
-};
-
-const writeSettings = async (settings) => {
-  const normalized = mergeSettings(settings);
-  await fs.mkdir(path.dirname(settingsPath()), { recursive: true });
-  await fs.writeFile(settingsPath(), JSON.stringify(normalized, null, 2), "utf8");
-  return normalized;
-};
-
-const updateSettingsByPath = (settings, settingPath, value) => {
-  const pathParts = String(settingPath || "").split(".").filter(Boolean);
-  if (pathParts.length === 0) return settings;
-  const draft = structuredClone(settings);
-  let cursor = draft;
-  for (let i = 0; i < pathParts.length - 1; i += 1) {
-    const key = pathParts[i];
-    if (!cursor[key] || typeof cursor[key] !== "object") {
-      cursor[key] = {};
-    }
-    cursor = cursor[key];
-  }
-  cursor[pathParts[pathParts.length - 1]] = value;
-  return mergeSettings(draft);
-};
-
 const isInputLocked = () => inputLockCount > 0;
 
 const shouldAllowShortcutWithHumanInput = () =>
