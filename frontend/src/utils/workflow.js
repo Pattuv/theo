@@ -50,7 +50,7 @@ export async function aiGO(text) {
     }
 
     const url = `${AI_URL}?user_input=${encodeURIComponent(text)}&classification=${encodeURIComponent(classification)}`;
-    window.dispatchEvent(new CustomEvent("ai-loading-start"));
+    queueMicrotask(() => window.dispatchEvent(new CustomEvent("ai-loading-start")));
     const response = await fetch(url);
     if (response.ok) {
       await setOutputPlaying(true);

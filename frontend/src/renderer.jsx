@@ -91,22 +91,30 @@ const App = () => {
     };
 
     const runLoadingLoop = () => {
-      if (!loadingActiveRef.current) return;
-      const audio = new Audio(loadingSound);
-      audio.play().catch((err) => console.error("[Loading] Play error:", err));
-      const onEnded = () => {
-        audio.removeEventListener("ended", onEnded);
-        audio.removeEventListener("error", onEnded);
+      try {
         if (!loadingActiveRef.current) return;
-        loadingLoopRef.current = setTimeout(runLoadingLoop, LOOP_DELAY_MS);
-      };
-      audio.addEventListener("ended", onEnded);
-      audio.addEventListener("error", onEnded);
+        const audio = new Audio(loadingSound);
+        audio.play().catch((err) => console.error("[Loading] Play error:", err));
+        const onEnded = () => {
+          audio.removeEventListener("ended", onEnded);
+          audio.removeEventListener("error", onEnded);
+          if (!loadingActiveRef.current) return;
+          loadingLoopRef.current = setTimeout(runLoadingLoop, LOOP_DELAY_MS);
+        };
+        audio.addEventListener("ended", onEnded);
+        audio.addEventListener("error", onEnded);
+      } catch (err) {
+        console.error("[Loading] Loop error:", err);
+      }
     };
 
     const onAiLoadingStart = () => {
-      loadingActiveRef.current = true;
-      runLoadingLoop();
+      try {
+        loadingActiveRef.current = true;
+        runLoadingLoop();
+      } catch (err) {
+        console.error("[Loading] Start error:", err);
+      }
     };
 
     const onAiDone = () => {
