@@ -19,7 +19,6 @@ def _play_wav(filename: str, blocking: bool = False) -> None:
             import sounddevice as sd
             import soundfile as sf
             data, sample_rate = sf.read(path)
-            # Normalize to float32 for sounddevice (handles int16/int32 WAVs from any encoder)
             if data.dtype.kind == "i":
                 data = data.astype("float32") / (2 ** (data.dtype.itemsize * 8 - 1))
             elif data.dtype != "float32":

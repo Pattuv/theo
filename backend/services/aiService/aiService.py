@@ -98,10 +98,8 @@ def run_main_llm(
 
 def parse_main_output(raw_text: str, classification: str) -> tuple[str, str]:
     
-   # Parse raw LLM output into (script_text, theo_response_text).
-   # For ---AGENT---: expects ---DELIMITER---; top = script, bottom = Theo response.
-   # For ---CHAT---: entire output is Theo response; no delimiter required.
-    
+
+    # parser
     raw = (raw_text or "").strip()
     if not raw:
         raise ValueError("Empty output from model")
@@ -118,7 +116,6 @@ def parse_main_output(raw_text: str, classification: str) -> tuple[str, str]:
         raise ValueError("Output must contain exactly one delimiter")
 
     script_text = parts[0].strip()
-    # Strip markdown code fences if model included them despite instructions
     for fence in ("```python", "```"):
         if script_text.startswith(fence):
             script_text = script_text[len(fence) :].lstrip()

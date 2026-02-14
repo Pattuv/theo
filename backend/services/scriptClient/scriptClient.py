@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_script(script_text: str) -> None:
-    """Validate Python syntax only. No import restrictions (dev mode)."""
+
     try:
         ast.parse(script_text)
     except SyntaxError as e:
@@ -27,13 +27,6 @@ def _validate_script(script_text: str) -> None:
 
 
 def run_script(script_text: str) -> dict[str, Any]:
-    """
-    Validate and execute the script text in-process.
-    All imports allowed (dev mode); use standard __builtins__.
-
-    Returns:
-        {"ok": True} on success, {"ok": False, "error": "..."} on validation or runtime error.
-    """
     script_text = (script_text or "").strip()
     if not script_text:
         return {"ok": False, "error": "Empty script"}
