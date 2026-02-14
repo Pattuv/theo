@@ -16,7 +16,11 @@ from services.aiService.aiService import (
     run_main_llm,
 )
 from services.scriptClient.scriptClient import run_script
-from services.TTS.ttsClient import speak_text, stop_playback
+from services.TTS.ttsClient import (
+    speak_text,
+    speak_text_with_started_event,
+    stop_playback,
+)
 from utils.audioFeedback.audioFeedback import play_image_error_sound
 from utils.audioFeedback.audioFeedback import play_warning_sound
 from utils.imageProcessor.imageProcessor import image_processor
@@ -146,12 +150,19 @@ def aiGO(user_input: str, classification: str) -> dict:
         elif classification == "---AGENT---" and not script_text.strip():
             logger.warning("AGENT classification but empty script from model")
 
-        # 8. Speak Theo response in background so we return immediately after script.
-        # Frontend gets response, disables click-through right away; TTS plays in background.
+        # 8. Speak Theo response in background. Wait until playback actually starts
+        # so frontend loading audio does not stop during a silent gap.
+        tts_started = threading.Event()
+
         def _speak_in_background():
-            speak_text(theo_response_text, async_play=False)
+            speak_text_with_started_event(
+                theo_response_text,
+                started_event=tts_started,
+                async_play=False,
+            )
 
         threading.Thread(target=_speak_in_background, daemon=True).start()
+        tts_started.wait(timeout=5.0)
 
         return {
             "ok": True,
