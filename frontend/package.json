@@ -38,8 +38,8 @@
     "electron-squirrel-startup": "^1.0.1",
     "framer-motion": "^12.23.26",
     "groq-sdk": "^0.37.0",
-    "node-global-key-listener": "^0.3.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react-dom": "^19.2.3",
+    "uiohook-napi": "^1.5.5"
   }
 }

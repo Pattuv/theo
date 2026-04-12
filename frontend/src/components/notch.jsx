@@ -315,6 +315,26 @@ function Notch({ taskbarHeight = 0 }) {
     };
   }, []);
 
+  // Ctrl+Alt global shortcut: toggle lockdown (click-through) on/off
+  useEffect(() => {
+    if (!window.electron?.ipcRenderer) return;
+
+    const handleCtrlAltToggle = () => {
+      if (clickThroughEnabled) {
+        window.electron?.setClickThrough?.(false);
+        setClickThroughEnabled(false);
+      } else {
+        window.electron?.setClickThrough?.(true);
+        setClickThroughEnabled(true);
+      }
+    };
+
+    window.electron.ipcRenderer.on("ctrl-alt-toggle-lockdown", handleCtrlAltToggle);
+    return () => {
+      window.electron.ipcRenderer.removeListener("ctrl-alt-toggle-lockdown", handleCtrlAltToggle);
+    };
+  }, [clickThroughEnabled]);
+
   // Help center dialog
   useEffect(() => {
     const dialog = helpCenterDialogRef.current;
@@ -445,10 +465,7 @@ function Notch({ taskbarHeight = 0 }) {
       >
         {!clickThroughEnabled && (
           <>
-            <div
-              className={`tooltip border ${tooltipDirClass}`}
-              data-tip="Settings"
-            >
+            <div className={`tooltip ${tooltipDirClass}`} data-tip="Settings">
               <button
                 onClick={() => setSettingsOpen(true)}
                 className="btn btn-sm btn-ghost text-lg brandbgdark text-white rounded-full shrink-0 transition-transform duration-200 hover:scale-110 border-0 hover:border-0"

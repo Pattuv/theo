@@ -29,26 +29,26 @@ Create a `.env` file in the repo root:
 
 ```
 GROQ_API_KEY=your_groq_key
-OPENAI_KEY=your_openai_key
+OPENAI_API_KEY=your_openai_key
 ```
 
-## Backend Setup
+## Setup & Run
 
-From `backend/`:
+1. **Install dependencies** (once):
 
-```
-pip install -r requirements.txt
-python app.py
-```
+   ```bash
+   cd backend && pip install -r requirements.txt
+   cd ../frontend && npm install
+   ```
 
-## Frontend Setup
+2. **Run Theo** (single command):
 
-From `frontend/`:
+   ```bash
+   cd backend
+   python app.py
+   ```
 
-```
-npm install
-npm start
-```
+   This starts the Flask backend and automatically launches the Electron UI. No need to run them separately.
 
 ## Notes
 

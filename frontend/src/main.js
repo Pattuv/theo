@@ -22,9 +22,9 @@ import { app, BrowserWindow, Menu, screen, ipcMain, shell } from "electron";
 import path from "node:path";
 import { createRequire } from "node:module";
 import started from "electron-squirrel-startup";
-import { GlobalKeyboardListener } from "node-global-key-listener";
 
 const require = createRequire(import.meta.url);
+const { uIOhook, UiohookKey } = require("uiohook-napi");
 
 let mainWindowRef = null;
 let inputLockCount = 0;
@@ -48,8 +48,14 @@ ipcMain.handle("set-startup-enabled", (_event, { enabled }) => {
     const settings = app.getLoginItemSettings();
     return { ok: true, enabled: Boolean(settings?.openAtLogin) };
   } catch (err) {
-    console.error("[Settings] set-startup-enabled failed:", err?.message || err);
-    return { ok: false, enabled: app.getLoginItemSettings()?.openAtLogin ?? false };
+    console.error(
+      "[Settings] set-startup-enabled failed:",
+      err?.message || err,
+    );
+    return {
+      ok: false,
+      enabled: app.getLoginItemSettings()?.openAtLogin ?? false,
+    };
   }
 });
 
@@ -156,26 +162,65 @@ const COOLDOWN_AFTER_RELEASE_MS = 2000;
 let lastTriggerAt = 0;
 let lastReleaseAt = 0;
 
+
+
 // Output playing: TTS is playing. Allow Ctrl+Win to interrupt and ask new prompt.
 // For AGENT mode, we only set this after script is done (when fetch returns).
 let outputPlaying = false;
 
-// Global keyboard listener
-let gkl = null;
+// uiohook-napi key-code helpers
+const isCtrlCode = (kc) => kc === UiohookKey.Ctrl || kc === UiohookKey.CtrlRight;
+const isWinCode  = (kc) => kc === UiohookKey.Meta || kc === UiohookKey.MetaRight;
+const isAltCode  = (kc) => kc === UiohookKey.Alt  || kc === UiohookKey.AltRight;
 
 ipcMain.handle("set-output-playing", (_event, payload) => {
   outputPlaying = Boolean(payload?.playing);
   return { ok: true };
 });
 
+const triggerAgentOverrideCancel = () => {
+  // Stop speech immediately.
+  fetch("http://127.0.0.1:5000/stop-tts", { method: "POST" }).catch(() => {});
+  outputPlaying = false;
+
+  // Force overlay to accept mouse again.
+  clickThroughEnabled = false;
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
+    mainWindowRef.setIgnoreMouseEvents(false);
+  }
+
+  // Release input lock so user can interact right away.
+  if (isInputLocked()) {
+    inputLockCount = 0;
+    if (mainWindowRef?.webContents) {
+      mainWindowRef.webContents.send("input-lock-changed", {
+        locked: false,
+        lockCount: inputLockCount,
+      });
+    }
+  }
+
+  // Tell renderer to drop AGENT/loading UI immediately.
+  if (mainWindowRef?.webContents) {
+    mainWindowRef.webContents.send("agent-override-cancelled");
+  }
+  console.log("[STT] Agent override cancel triggered via Ctrl+Win");
+};
+
 const handleCtrlWinPress = () => {
   const now = Date.now();
-  if (clickThroughEnabled) return;
-  if (isInputLocked()) return;
+  if (clickThroughEnabled || isInputLocked()) {
+    triggerAgentOverrideCancel();
+    return;
+  }
   if (now - lastTriggerAt < TRIGGER_LOCKOUT_MS) return;
   // Bypass cooldown when TTS is playing (user can interrupt to ask new prompt)
   const canInterrupt = outputPlaying;
-  if (!canInterrupt && lastReleaseAt > 0 && now - lastReleaseAt < COOLDOWN_AFTER_RELEASE_MS)
+  if (
+    !canInterrupt &&
+    lastReleaseAt > 0 &&
+    now - lastReleaseAt < COOLDOWN_AFTER_RELEASE_MS
+  )
     return;
   if (!bothKeysReleased) return;
 
@@ -207,90 +252,62 @@ const handleCtrlWinRelease = () => {
   }
 };
 
-// Key names: Windows uses "LEFT CTRL"/"RIGHT CTRL" and "LEFT META"/"RIGHT META" (standardName)
-const CTRL_NAMES = [
-  "LEFT CONTROL",
-  "RIGHT CONTROL",
-  "CONTROL",
-  "LEFT CTRL",
-  "RIGHT CTRL",
-  "LCONTROL",
-  "RCONTROL",
-];
-const WIN_NAMES = [
-  "LEFT META",
-  "RIGHT META",
-  "META",
-  "LEFT WIN",
-  "RIGHT WIN",
-  "WIN",
-  "LWIN",
-  "RWIN",
-];
+const initializeGlobalKeyListener = () => {
+  // Track which keys are physically held so keyup correctly reflects state
+  // after a key is released (uiohook modifier flags behave like browser events).
+  const heldKeys = new Set();
 
-const isCtrlKey = (name) => name && CTRL_NAMES.includes(name);
-const isWinKey = (name) => name && WIN_NAMES.includes(name);
+  uIOhook.on("keydown", (e) => {
+    heldKeys.add(e.keycode);
 
-const initializeGlobalKeyListener = async () => {
-  // Resolve WinKeyServer.exe from the package (Vite bundle breaks __dirname inside the lib)
-  let keyListenerConfig = {};
-  if (process.platform === "win32") {
-    try {
-      const pkgPath = require.resolve("node-global-key-listener/package.json");
-      const winKeyServerPath = path.join(
-        path.dirname(pkgPath),
-        "bin",
-        "WinKeyServer.exe",
-      );
-      keyListenerConfig = { windows: { serverPath: winKeyServerPath } };
-    } catch (e) {
-      console.warn("[STT] Could not resolve WinKeyServer path:", e.message);
+    const ctrlHeld = heldKeys.has(UiohookKey.Ctrl) || heldKeys.has(UiohookKey.CtrlRight);
+    const winHeld  = heldKeys.has(UiohookKey.Meta) || heldKeys.has(UiohookKey.MetaRight);
+    const altHeld  = heldKeys.has(UiohookKey.Alt)  || heldKeys.has(UiohookKey.AltRight);
+
+    // Ctrl+Alt: toggle lockdown (click-through) on/off
+    if (ctrlHeld && altHeld && !winHeld && (isCtrlCode(e.keycode) || isAltCode(e.keycode))) {
+      if (mainWindowRef?.webContents) {
+        mainWindowRef.webContents.send("ctrl-alt-toggle-lockdown");
+      }
     }
-  }
 
-  gkl = new GlobalKeyboardListener(keyListenerConfig);
-
-  await gkl.addListener((e, down) => {
-    const ctrlHeld = CTRL_NAMES.some((k) => down[k]);
-    const winHeld = WIN_NAMES.some((k) => down[k]);
-
-    // Ctrl alone (no Win): stop TTS response
-    if (e.state === "DOWN" && isCtrlKey(e.name) && ctrlHeld && !winHeld) {
+    // Ctrl alone (no Win, no Alt): stop TTS.
+    // Ignored during AGENT click-through mode — PyAutoGUI synthesises Ctrl
+    // keystrokes that would otherwise cut off Theo's speech.
+    if (!clickThroughEnabled && isCtrlCode(e.keycode) && ctrlHeld && !winHeld && !altHeld) {
       fetch("http://127.0.0.1:5000/stop-tts", { method: "POST" }).catch(() => {});
       if (outputPlaying) outputPlaying = false;
     }
 
-    if (
-      e.state === "UP" &&
-      ctrlWinPressed &&
-      (isCtrlKey(e.name) || isWinKey(e.name))
-    ) {
-      handleCtrlWinRelease();
-    }
-
     ctrlKeyPressed = ctrlHeld;
-    winKeyPressed = winHeld;
+    winKeyPressed  = winHeld;
 
-    // Allow next trigger only after BOTH keys have been released (stops mid-sentence re-trigger)
-    if (!ctrlHeld && !winHeld) {
-      bothKeysReleased = true;
-    }
+    if (!ctrlHeld && !winHeld) bothKeysReleased = true;
 
-    // Trigger only: keydown, both held, we're allowed (both were released before), and not already active
-    if (
-      e.state === "DOWN" &&
-      ctrlKeyPressed &&
-      winKeyPressed &&
-      bothKeysReleased &&
-      !ctrlWinPressed
-    ) {
+    // Trigger when both Ctrl+Win are held, both were released before, and not already active
+    if (ctrlHeld && winHeld && bothKeysReleased && !ctrlWinPressed) {
       handleCtrlWinPress();
     }
   });
 
-  console.log(
-    "[STT] Global keyboard listener started - hold Ctrl+Win to record, release to transcribe",
-  );
+  uIOhook.on("keyup", (e) => {
+    heldKeys.delete(e.keycode);
+
+    const ctrlHeld = heldKeys.has(UiohookKey.Ctrl) || heldKeys.has(UiohookKey.CtrlRight);
+    const winHeld  = heldKeys.has(UiohookKey.Meta) || heldKeys.has(UiohookKey.MetaRight);
+
+    if (ctrlWinPressed && (isCtrlCode(e.keycode) || isWinCode(e.keycode))) {
+      handleCtrlWinRelease();
+    }
+
+    ctrlKeyPressed = ctrlHeld;
+    winKeyPressed  = winHeld;
+
+    if (!ctrlHeld && !winHeld) bothKeysReleased = true;
+  });
+
+  uIOhook.start();
+  console.log("[STT] Global keyboard listener started - hold Ctrl+Win to record, release to transcribe");
 };
 
 const createWindow = () => {
@@ -436,11 +453,12 @@ const createWindow = () => {
 app.whenReady().then(() => {
   createWindow();
 
-  // start key listener in background so a slow/hanging spawn doesn't block the window
-  initializeGlobalKeyListener().catch((err) => {
+  try {
+    initializeGlobalKeyListener();
+  } catch (err) {
     console.error("[STT] Global key listener failed:", err.message || err);
     console.warn("[STT] Ctrl+Win shortcut will not work. App will still run.");
-  });
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -448,7 +466,7 @@ app.whenReady().then(() => {
 });
 
 app.on("will-quit", () => {
-  if (gkl) gkl.kill();
+  try { uIOhook.stop(); } catch (_) { /* already stopped or never started */ }
 });
 
 app.on("window-all-closed", () => {

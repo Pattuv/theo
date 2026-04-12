@@ -1,4 +1,4 @@
-
+"""Execute Theo agent scripts with PyAutoGUI. Uses low pause for snappier automation."""
 
 import ast
 import builtins
@@ -16,6 +16,9 @@ except ImportError:
     PIL = None
 
 logger = logging.getLogger(__name__)
+
+# Lower default pause for faster script execution (UPDATEPLAN §6)
+pyautogui.PAUSE = 0.02
 
 
 def _validate_script(script_text: str) -> None:

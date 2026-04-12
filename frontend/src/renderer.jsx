@@ -76,11 +76,31 @@ const App = () => {
   useEffect(() => {
     const onAiGo = () => setAiActive(true);
     const onAiDone = () => setAiActive(false);
+    // ai-script-done fires as soon as the automation script finishes (before TTS ends)
+    const onAiScriptDone = () => setAiActive(false);
+    const onAgentOverrideCancelled = () => {
+      window.dispatchEvent(
+        new CustomEvent("output-playing-changed", {
+          detail: { playing: false },
+        }),
+      );
+      window.dispatchEvent(new CustomEvent("ai-done"));
+    };
     window.addEventListener("ai-go", onAiGo);
     window.addEventListener("ai-done", onAiDone);
+    window.addEventListener("ai-script-done", onAiScriptDone);
+    window.electron?.ipcRenderer?.on?.(
+      "agent-override-cancelled",
+      onAgentOverrideCancelled,
+    );
     return () => {
       window.removeEventListener("ai-go", onAiGo);
       window.removeEventListener("ai-done", onAiDone);
+      window.removeEventListener("ai-script-done", onAiScriptDone);
+      window.electron?.ipcRenderer?.removeListener?.(
+        "agent-override-cancelled",
+        onAgentOverrideCancelled,
+      );
     };
   }, []);
 
@@ -102,7 +122,9 @@ const App = () => {
         const audio = new Audio(loadingSound);
         const deviceId = getSavedSpeakerDeviceId();
         if (deviceId) applySpeakerToElement(audio, deviceId).catch(() => {});
-        audio.play().catch((err) => console.error("[Loading] Play error:", err));
+        audio
+          .play()
+          .catch((err) => console.error("[Loading] Play error:", err));
         const onEnded = () => {
           audio.removeEventListener("ended", onEnded);
           audio.removeEventListener("error", onEnded);
@@ -141,7 +163,10 @@ const App = () => {
       stopLoadingSound();
       window.removeEventListener("ai-loading-start", onAiLoadingStart);
       window.removeEventListener("ai-done", onAiDone);
-      window.removeEventListener("output-playing-changed", onOutputPlayingChanged);
+      window.removeEventListener(
+        "output-playing-changed",
+        onOutputPlayingChanged,
+      );
     };
   }, []);
 

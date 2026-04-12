@@ -34,8 +34,10 @@ contextBridge.exposeInMainWorld("electron", {
       const validChannels = [
         "ctrl-win-key-down",
         "ctrl-win-key-up",
+        "ctrl-alt-toggle-lockdown",
         "set-env",
         "input-lock-changed",
+        "agent-override-cancelled",
       ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, (event, ...args) => func(...args));

@@ -66,7 +66,10 @@ export function initPushToTalk() {
         }
       } catch (err) {
         if (deviceId) {
-          log("Saved mic not available, falling back to default:", err?.message);
+          log(
+            "Saved mic not available, falling back to default:",
+            err?.message,
+          );
           stream = await navigator.mediaDevices.getUserMedia({
             audio: baseConstraints,
           });

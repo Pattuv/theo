@@ -1,8 +1,11 @@
 import io
 import logging
-import threading
-from datetime import datetime
 import os
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,11 +19,7 @@ from services.aiService.aiService import (
     run_main_llm,
 )
 from services.scriptClient.scriptClient import run_script
-from services.TTS.ttsClient import (
-    speak_text,
-    speak_text_with_started_event,
-    stop_playback,
-)
+from services.TTS.ttsClient import speak_text, speak_text_with_started_event, stop_playback
 from utils.audioFeedback.audioFeedback import play_image_error_sound
 from utils.audioFeedback.audioFeedback import play_warning_sound
 from utils.imageProcessor.imageProcessor import image_processor
@@ -28,6 +27,22 @@ from utils.llmclassifer.llmClassifier import llmclassifier
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# TTS playback state — set True when background TTS starts, False when it ends.
+# Polled by the frontend via /tts-status to know when it's safe to allow next input.
+_tts_playing: bool = False
+_tts_lock = threading.Lock()
+
+
+def _set_tts_playing(playing: bool) -> None:
+    global _tts_playing
+    with _tts_lock:
+        _tts_playing = playing
+
+
+def _perf_timer() -> float:
+    """Return current monotonic time in seconds."""
+    return time.perf_counter()
 
 # Load .env for keys
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -53,6 +68,29 @@ def _is_datetime_query(user_input: str) -> bool:
         "day of the week",
         "today's date",
         "todays date",
+    )
+    return any(p in text for p in patterns)
+
+
+def _is_screen_read_query(user_input: str) -> bool:
+    """
+    Detect requests that should read/describe on-screen content without automation.
+    These must never trigger AGENT execution.
+    """
+    text = (user_input or "").strip().lower()
+    patterns = (
+        "read my screen",
+        "read the screen",
+        "read out my screen",
+        "read out the screen",
+        "describe my screen",
+        "describe the screen",
+        "what's on my screen",
+        "whats on my screen",
+        "what is on my screen",
+        "tell me what's on my screen",
+        "tell me what is on my screen",
+        "screen reader",
     )
     return any(p in text for p in patterns)
 
@@ -89,19 +127,26 @@ def aiGO(user_input: str, classification: str) -> dict:
     if classification not in ("---CHAT---", "---AGENT---"):
         return {"ok": False, "error": f"Invalid classification: {classification}"}
 
+    timings = {}
+    t0 = _perf_timer()
+
     # screenshot
     try:
+        t_screen = _perf_timer()
         result = image_processor()
+        timings["screenshot_ms"] = round((_perf_timer() - t_screen) * 1000)
     except Exception as e:
         logger.exception("Screenshot capture failed")
         play_image_error_sound()
         return {"ok": False, "error": "Screenshot failed", "detail": str(e)}
 
-    # convert PIL image to bytes
+    # convert PIL image to bytes (optimize=False for faster encoding on live path)
+    t_encode = _perf_timer()
     img = result["image"]
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.save(buf, format="PNG", optimize=False)
     image_bytes = buf.getvalue()
+    timings["encode_ms"] = round((_perf_timer() - t_encode) * 1000)
 
     meta = {
         "width": result["width"],
@@ -110,66 +155,76 @@ def aiGO(user_input: str, classification: str) -> dict:
         "scale": result["scale"],
     }
 
-
     SESSION_MEMORY.append({"role": "user", "content": user_input})
     _trim_memory()
 
     try:
         # call AI service
+        t_llm = _perf_timer()
         instructions = load_main_system_prompt()
         input_items = build_main_input(
             classification=classification,
             user_text=user_input,
             image_bytes=image_bytes,
             meta=meta,
-            memory_messages=SESSION_MEMORY[:-1],  
+            memory_messages=SESSION_MEMORY[:-1],
         )
         raw_text = run_main_llm(instructions=instructions, input_items=input_items)
+        timings["llm_ms"] = round((_perf_timer() - t_llm) * 1000)
 
-        
         script_text, theo_response_text = parse_main_output(raw_text, classification)
 
         # add assistant response to memory
         SESSION_MEMORY.append({"role": "assistant", "content": theo_response_text})
         _trim_memory()
 
-        # 7. If AGENT, run script
-        script_result = None
-        if classification == "---AGENT---" and script_text.strip():
-            script_result = run_script(script_text)
-            if not script_result.get("ok"):
-                fallback_msg = f"Script encountered an error: {script_result.get('error', 'unknown')}" if script_result.get("error") else "The script failed to complete."
-                speak_text(fallback_msg, async_play=True)
-                return {
-                    "ok": True,
-                    "classification": classification,
-                    "script_ok": False,
-                    "script_error": script_result.get("error"),
-                    "theo_response": theo_response_text,
-                }
-        elif classification == "---AGENT---" and not script_text.strip():
-            logger.warning("AGENT classification but empty script from model")
-
-        # 8. Speak Theo response in background. Wait until playback actually starts
-        # so frontend loading audio does not stop during a silent gap.
+        # Start TTS in background (runs in parallel with script for AGENT)
         tts_started = threading.Event()
 
         def _speak_in_background():
-            speak_text_with_started_event(
-                theo_response_text,
-                started_event=tts_started,
-                async_play=False,
-            )
+            _set_tts_playing(True)
+            try:
+                speak_text_with_started_event(
+                    theo_response_text,
+                    started_event=tts_started,
+                    async_play=False,
+                )
+            finally:
+                _set_tts_playing(False)
 
         threading.Thread(target=_speak_in_background, daemon=True).start()
-        tts_started.wait(timeout=5.0)
 
-        return {
+        # If AGENT, run script (blocking until done; TTS runs in parallel)
+        script_result = None
+        if classification == "---AGENT---" and script_text.strip():
+            t_script = _perf_timer()
+            script_result = run_script(script_text)
+            timings["script_ms"] = round((_perf_timer() - t_script) * 1000)
+            if not script_result.get("ok"):
+                fallback_msg = (
+                    f"Script encountered an error: {script_result.get('error', 'unknown')}"
+                    if script_result.get("error")
+                    else "The script failed to complete."
+                )
+                speak_text(fallback_msg, async_play=True)
+        elif classification == "---AGENT---" and not script_text.strip():
+            logger.warning("AGENT classification but empty script from model")
+
+        timings["total_ms"] = round((_perf_timer() - t0) * 1000)
+        tts_started_ok = tts_started.wait(timeout=5.0)
+        timings["tts_started"] = bool(tts_started_ok)
+        logger.info("aiGO timings: %s", timings)
+
+        result_payload = {
             "ok": True,
             "classification": classification,
             "script_ok": script_result.get("ok", True) if script_result else None,
             "theo_response": theo_response_text,
+            "timings": timings,
         }
+        if script_result and not script_result.get("ok"):
+            result_payload["script_error"] = script_result.get("error")
+        return result_payload
 
     except ValueError as e:
         # Parse error
@@ -257,11 +312,27 @@ def ai():
         }), 200
 
     classification_param = request.args.get("classification")
-    if classification_param and classification_param.strip() in ("---CHAT---", "---AGENT---", "---UNSAFE---"):
+    classify_ms = None
+    classification_source = "backend_classifier"
+    # Guardrail: screen-reading requests should describe screen content, not automate UI.
+    if _is_screen_read_query(user_input):
+        classification = "---CHAT---"
+        classification_source = "screen_reader_rule"
+    elif classification_param and classification_param.strip() in ("---CHAT---", "---AGENT---", "---UNSAFE---"):
         classification = classification_param.strip()
+        classification_source = "frontend_param"
     else:
+        t_classify = _perf_timer()
         raw_classification = llmclassifier(user_input)
         classification = _normalize_classification(raw_classification)
+        classify_ms = round((_perf_timer() - t_classify) * 1000)
+        classification_source = "backend_classifier"
+
+    logger.info(
+        "Classification resolved: %s (classification_source=%s)",
+        classification,
+        classification_source,
+    )
 
     if classification == "---UNSAFE---":
         play_warning_sound(blocking=True)
@@ -270,12 +341,18 @@ def ai():
     if classification in ("---CHAT---", "---AGENT---"):
         result = aiGO(user_input, classification)
         if result.get("ok"):
-            return jsonify({
+            payload = {
                 "ok": True,
                 "classification": result.get("classification", classification),
                 "script_ok": result.get("script_ok"),
                 "theo_response": result.get("theo_response"),
-            }), 200
+            }
+            timings = result.get("timings", {})
+            if classify_ms is not None:
+                timings["classify_ms"] = classify_ms
+            if timings:
+                payload["timings"] = timings
+            return jsonify(payload), 200
         else:
             return jsonify({
                 "ok": False,
@@ -295,6 +372,13 @@ def stop_tts():
     return jsonify({"ok": True}), 200
 
 
+@app.route("/tts-status", methods=["GET"])
+def tts_status():
+    """Poll whether TTS is currently playing. Frontend holds input lock until this returns false."""
+    with _tts_lock:
+        return jsonify({"playing": _tts_playing}), 200
+
+
 @app.route("/shutdown", methods=["POST"])
 def shutdown():
     """Shutdown the Flask server (called by Electron on quit)."""
@@ -302,5 +386,34 @@ def shutdown():
     os._exit(0)
 
 
+def _launch_electron():
+    """Spawn Electron in background after a short delay so Flask is ready."""
+    time.sleep(2)
+    project_root = Path(__file__).resolve().parent.parent
+    frontend_dir = project_root / "frontend"
+    if not frontend_dir.exists():
+        logger.warning("Frontend dir not found at %s, skipping Electron launch", frontend_dir)
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                ["npm", "start"],
+                cwd=str(frontend_dir),
+                shell=True,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            subprocess.Popen(["npm", "start"], cwd=str(frontend_dir))
+        logger.info("Launched Electron from %s", frontend_dir)
+    except Exception as e:
+        logger.exception("Failed to launch Electron: %s", e)
+
+
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # Only launch Electron once: in the reloader child when debug=True, or always when debug=False.
+    # Flask debug mode runs the script twice (parent + child); we must not spawn from the parent.
+    _debug = True
+    _is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    if _is_reloader_child or not _debug:
+        threading.Thread(target=_launch_electron, daemon=True).start()
+    app.run(host="127.0.0.1", port=5000, debug=_debug)
