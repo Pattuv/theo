@@ -31,7 +31,8 @@ function SettingsModal({ onClose, onSave }) {
       setLoading(true);
       const [devicesResult, startupResult] = await Promise.all([
         enumerateDevices(),
-        window.electron?.getStartupEnabled?.() ?? Promise.resolve({ enabled: false }),
+        window.electron?.getStartupEnabled?.() ??
+          Promise.resolve({ enabled: false }),
       ]);
       if (cancelled) return;
       setMics(devicesResult.mics);
@@ -39,7 +40,9 @@ function SettingsModal({ onClose, onSave }) {
       const savedMic = getSavedMicDeviceId();
       const savedSpeaker = getSavedSpeakerDeviceId();
       const micExists = devicesResult.mics.some((d) => d.deviceId === savedMic);
-      const speakerExists = devicesResult.speakers.some((d) => d.deviceId === savedSpeaker);
+      const speakerExists = devicesResult.speakers.some(
+        (d) => d.deviceId === savedSpeaker,
+      );
       setSelectedMicId(micExists ? savedMic : "");
       setSelectedSpeakerId(speakerExists ? savedSpeaker : "");
       setStartupEnabled(Boolean(startupResult?.enabled));
@@ -49,7 +52,9 @@ function SettingsModal({ onClose, onSave }) {
       setLoading(false);
     };
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSave = async () => {
@@ -124,7 +129,9 @@ function SettingsModal({ onClose, onSave }) {
           </div>
 
           <div className="flex items-center justify-between">
-            <label className="font-medium bric text-sm">Launch Theo at startup</label>
+            <label className="font-medium bric text-sm">
+              Launch Theo at startup
+            </label>
             <input
               type="checkbox"
               className="toggle toggle-primary"
@@ -134,7 +141,9 @@ function SettingsModal({ onClose, onSave }) {
           </div>
 
           <div className="flex items-center justify-between">
-            <label className="font-medium bric text-sm">Full startup sound</label>
+            <label className="font-medium bric text-sm">
+              Full startup sound
+            </label>
             <input
               type="checkbox"
               className="toggle toggle-primary"
@@ -228,12 +237,15 @@ function Notch({ taskbarHeight = 0 }) {
 
     const applySink = () => {
       const id = getSavedSpeakerDeviceId();
-      if (id && ping1Audio.current) applySpeakerToElement(ping1Audio.current, id);
-      if (id && ping2Audio.current) applySpeakerToElement(ping2Audio.current, id);
+      if (id && ping1Audio.current)
+        applySpeakerToElement(ping1Audio.current, id);
+      if (id && ping2Audio.current)
+        applySpeakerToElement(ping2Audio.current, id);
     };
     applySink();
     window.addEventListener("settings-devices-changed", applySink);
-    return () => window.removeEventListener("settings-devices-changed", applySink);
+    return () =>
+      window.removeEventListener("settings-devices-changed", applySink);
   }, []);
 
   // Listen for Ctrl+Win key events
@@ -248,7 +260,11 @@ function Notch({ taskbarHeight = 0 }) {
       }
       const now = Date.now();
       const canInterrupt = outputPlaying;
-      if (!canInterrupt && now - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS) return;
+      if (
+        !canInterrupt &&
+        now - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS
+      )
+        return;
       if (isHoldingRef.current) return;
 
       isHoldingRef.current = true;
@@ -296,10 +312,16 @@ function Notch({ taskbarHeight = 0 }) {
       "input-lock-changed",
       handleInputLockChanged,
     );
-    window.addEventListener("output-playing-changed", handleOutputPlayingChanged);
+    window.addEventListener(
+      "output-playing-changed",
+      handleOutputPlayingChanged,
+    );
 
     return () => {
-      window.removeEventListener("output-playing-changed", handleOutputPlayingChanged);
+      window.removeEventListener(
+        "output-playing-changed",
+        handleOutputPlayingChanged,
+      );
       window.electron.ipcRenderer.removeListener(
         "ctrl-win-key-down",
         handleCtrlWinKeyDown,
@@ -329,9 +351,15 @@ function Notch({ taskbarHeight = 0 }) {
       }
     };
 
-    window.electron.ipcRenderer.on("ctrl-alt-toggle-lockdown", handleCtrlAltToggle);
+    window.electron.ipcRenderer.on(
+      "ctrl-alt-toggle-lockdown",
+      handleCtrlAltToggle,
+    );
     return () => {
-      window.electron.ipcRenderer.removeListener("ctrl-alt-toggle-lockdown", handleCtrlAltToggle);
+      window.electron.ipcRenderer.removeListener(
+        "ctrl-alt-toggle-lockdown",
+        handleCtrlAltToggle,
+      );
     };
   }, [clickThroughEnabled]);
 
@@ -395,7 +423,11 @@ function Notch({ taskbarHeight = 0 }) {
         return;
 
       const canInterrupt = outputPlaying;
-      if (!canInterrupt && Date.now() - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS) return;
+      if (
+        !canInterrupt &&
+        Date.now() - lastCtrlWinAtRef.current < CTRL_WIN_COOLDOWN_MS
+      )
+        return;
 
       isHoldingRef.current = true;
       setIsCtrlWinHeld(true);
@@ -613,18 +645,17 @@ function Notch({ taskbarHeight = 0 }) {
         className="modal"
         onCancel={() => setSettingsOpen(false)}
         onClick={(e) => {
-          if (e.target === settingsDialogRef.current)
-            setSettingsOpen(false);
+          if (e.target === settingsDialogRef.current) setSettingsOpen(false);
         }}
       >
         <div onClick={(e) => e.stopPropagation()}>
           <SettingsModal
-          onClose={() => setSettingsOpen(false)}
-          onSave={() => {
-            setSettingsOpen(false);
-            window.dispatchEvent(new CustomEvent("settings-devices-changed"));
-          }}
-        />
+            onClose={() => setSettingsOpen(false)}
+            onSave={() => {
+              setSettingsOpen(false);
+              window.dispatchEvent(new CustomEvent("settings-devices-changed"));
+            }}
+          />
         </div>
       </dialog>
 
@@ -689,9 +720,9 @@ function Notch({ taskbarHeight = 0 }) {
           <div id="moveButtons" className="mt-5 flex flex-col gap-3">
             <button
               onClick={() => {
-              setPosition("bottom-left");
-              saveNotchPosition("bottom-left");
-            }}
+                setPosition("bottom-left");
+                saveNotchPosition("bottom-left");
+              }}
               className={moveBtnClass("bottom-left")}
             >
               <span>Bottom-Left</span>
@@ -701,9 +732,9 @@ function Notch({ taskbarHeight = 0 }) {
             </button>
             <button
               onClick={() => {
-              setPosition("top-left");
-              saveNotchPosition("top-left");
-            }}
+                setPosition("top-left");
+                saveNotchPosition("top-left");
+              }}
               className={moveBtnClass("top-left")}
             >
               <span>Top-Left</span>
@@ -713,9 +744,9 @@ function Notch({ taskbarHeight = 0 }) {
             </button>
             <button
               onClick={() => {
-              setPosition("bottom-right");
-              saveNotchPosition("bottom-right");
-            }}
+                setPosition("bottom-right");
+                saveNotchPosition("bottom-right");
+              }}
               className={moveBtnClass("bottom-right")}
             >
               <span>Bottom-Right</span>
@@ -725,9 +756,9 @@ function Notch({ taskbarHeight = 0 }) {
             </button>
             <button
               onClick={() => {
-              setPosition("top-right");
-              saveNotchPosition("top-right");
-            }}
+                setPosition("top-right");
+                saveNotchPosition("top-right");
+              }}
               className={moveBtnClass("top-right")}
             >
               <span>Top-Right</span>
