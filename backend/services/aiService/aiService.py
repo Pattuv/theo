@@ -65,7 +65,6 @@ def build_main_input(
         + f"{meta_text}"
     )
 
-
     input_items: list[dict] = []
 
     for msg in memory_messages:
