@@ -2,7 +2,7 @@ import requests
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
-from location import getLocation
+from .location import getLocation
 
 
 def getWeather(location_name: str) -> tuple[str, float, str]:
@@ -96,8 +96,6 @@ def getWeather(location_name: str) -> tuple[str, float, str]:
     return place, temp_f, qualitative
 
 
-## development scaffolding
-# Test with your current location
-print(getWeather("local"))
-#test a different location
-print(getWeather("London, United Kingdom"))
+if __name__ == "__main__":
+    print(getWeather("local"))
+    print(getWeather("London, United Kingdom"))
