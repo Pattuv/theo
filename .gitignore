@@ -97,6 +97,9 @@ __pycache__/
 *.py[cod]
 backend/services/TTS/*.wav
 
+# requests-cache SQLite DB (weather / Open-Meteo), cwd-dependent
+.cache.sqlite
+
 # 2) Unstage anything currently staged (optional but cleaner)
 git restore --staged .
 
