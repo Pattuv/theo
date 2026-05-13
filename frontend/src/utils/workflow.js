@@ -68,14 +68,16 @@ async function classifyText(text) {
       throw new Error(`Classify failed with ${classifyRes.status}`);
     }
     const data = await classifyRes.json();
+    const classification = normalizeClassification(data?.classification);
+    const raw = data?.raw != null ? String(data.raw) : "";
     // #region agent log
     fetch('http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'workflow.js:classify_done',message:'classify round-trip',data:{classify_ms:Date.now()-_tc0,result:data?.classification},timestamp:Date.now(),hypothesisId:'H-D'})}).catch(()=>{});
     // #endregion
-    return normalizeClassification(data?.classification);
+    return { classification, raw: raw.trim() ? raw : undefined };
   } catch (err) {
     // Fail-safe: never default to AGENT on classifier failures.
     console.error("[AI] Classification failed, defaulting to CHAT:", err);
-    return "---CHAT---";
+    return { classification: "---CHAT---", raw: undefined };
   }
 }
 
@@ -84,14 +86,15 @@ export async function aiGO(text) {
   await setOutputPlaying(false);
   await setInputLock(true);
   try {
-    const classification = await classifyText(text);
+    const { classification, raw } = await classifyText(text);
     if (classification === "---AGENT---") {
       window.dispatchEvent(new CustomEvent("ai-go"));
       await setClickThrough(true);
     }
 
     queueMicrotask(() => window.dispatchEvent(new CustomEvent("ai-loading-start")));
-    const url = `${AI_URL}?user_input=${encodeURIComponent(text)}&classification=${encodeURIComponent(classification)}`;
+    const rawParam = raw ? `&classifier_raw=${encodeURIComponent(raw)}` : "";
+    const url = `${AI_URL}?user_input=${encodeURIComponent(text)}&classification=${encodeURIComponent(classification)}${rawParam}`;
     // #region agent log
     const _t0 = Date.now();
     const _tClassify = _t0; // classify already done above

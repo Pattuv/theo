@@ -32,6 +32,7 @@ def build_main_input(
     image_bytes: bytes,
     meta: dict,
     memory_messages: list[dict],
+    tool_context: str | None = None,
 ) -> list[dict]:
     if classification not in ("---CHAT---", "---AGENT---"):
         raise ValueError(f"Invalid classification: {classification}")
@@ -50,10 +51,18 @@ def build_main_input(
         f"scale={scale}. Use these coordinates for PyAutoGUI when generating agent scripts."
     )
 
+    tool_block = ""
+    if tool_context and str(tool_context).strip():
+        tool_block = (
+            "Tool results (authoritative, fetched before this message):\n"
+            f"{str(tool_context).strip()}\n\n"
+        )
+
     user_content = (
-        f"Classification: {classification}\n\n"
-        f"User prompt: {user_text}\n\n"
-        f"{meta_text}"
+        tool_block
+        + f"Classification: {classification}\n\n"
+        + f"User prompt: {user_text}\n\n"
+        + f"{meta_text}"
     )
 
 

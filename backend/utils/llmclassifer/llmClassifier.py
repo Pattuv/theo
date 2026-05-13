@@ -27,5 +27,3 @@ def llmclassifier(user_input: str) -> str:
   output_text = completion.choices[0].message.content.strip()
   print(output_text)
   return output_text
-
-

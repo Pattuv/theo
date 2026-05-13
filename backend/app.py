@@ -19,6 +19,7 @@ from services.aiService.aiService import (
     run_main_llm,
 )
 from services.scriptClient.scriptClient import run_script
+from services.toolCaller.toolCaller import parse_classifier_raw, run_tool_segments
 from services.TTS.ttsClient import speak_text, speak_text_with_started_event, stop_playback
 from utils.audioFeedback.audioFeedback import play_image_error_sound
 from utils.audioFeedback.audioFeedback import play_warning_sound
@@ -119,7 +120,7 @@ def _trim_memory() -> None:
         SESSION_MEMORY[:] = SESSION_MEMORY[-MAX_MEMORY_TURNS:]
 
 
-def aiGO(user_input: str, classification: str) -> dict:
+def aiGO(user_input: str, classification: str, tool_context: str | None = None) -> dict:
     """
     Orchestrate the full AI workflow: screenshot -> LLM -> parse -> script (if AGENT) -> TTS.
     Returns structured result dict for route response.
@@ -168,6 +169,7 @@ def aiGO(user_input: str, classification: str) -> dict:
             image_bytes=image_bytes,
             meta=meta,
             memory_messages=SESSION_MEMORY[:-1],
+            tool_context=tool_context,
         )
         raw_text = run_main_llm(instructions=instructions, input_items=input_items)
         timings["llm_ms"] = round((_perf_timer() - t_llm) * 1000)
@@ -289,7 +291,7 @@ def ai_classify():
     user_input = str(user_input).strip()
     raw_classification = llmclassifier(user_input)
     classification = _normalize_classification(raw_classification)
-    return jsonify({"ok": True, "classification": classification}), 200
+    return jsonify({"ok": True, "classification": classification, "raw": raw_classification}), 200
 
 
 @app.route("/ai", methods=["GET"])
@@ -312,8 +314,10 @@ def ai():
         }), 200
 
     classification_param = request.args.get("classification")
+    classifier_raw_param = (request.args.get("classifier_raw") or "").strip()
     classify_ms = None
     classification_source = "backend_classifier"
+    tool_segments: list[tuple[str, ...]] = []
     # Guardrail: screen-reading requests should describe screen content, not automate UI.
     if _is_screen_read_query(user_input):
         classification = "---CHAT---"
@@ -321,10 +325,12 @@ def ai():
     elif classification_param and classification_param.strip() in ("---CHAT---", "---AGENT---", "---UNSAFE---"):
         classification = classification_param.strip()
         classification_source = "frontend_param"
+        if classifier_raw_param:
+            _, tool_segments = parse_classifier_raw(classifier_raw_param)
     else:
         t_classify = _perf_timer()
         raw_classification = llmclassifier(user_input)
-        classification = _normalize_classification(raw_classification)
+        classification, tool_segments = parse_classifier_raw(raw_classification)
         classify_ms = round((_perf_timer() - t_classify) * 1000)
         classification_source = "backend_classifier"
 
@@ -339,7 +345,11 @@ def ai():
         return jsonify({"ok": False, "classification": classification}), 400
 
     if classification in ("---CHAT---", "---AGENT---"):
-        result = aiGO(user_input, classification)
+        t_tools = _perf_timer()
+        tool_context = run_tool_segments(tool_segments) if tool_segments else None
+        tools_ms = round((_perf_timer() - t_tools) * 1000) if tool_segments else None
+
+        result = aiGO(user_input, classification, tool_context=tool_context)
         if result.get("ok"):
             payload = {
                 "ok": True,
@@ -350,6 +360,8 @@ def ai():
             timings = result.get("timings", {})
             if classify_ms is not None:
                 timings["classify_ms"] = classify_ms
+            if tools_ms is not None:
+                timings["tools_ms"] = tools_ms
             if timings:
                 payload["timings"] = timings
             return jsonify(payload), 200
