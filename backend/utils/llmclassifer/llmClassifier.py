@@ -29,3 +29,5 @@ def llmclassifier(user_input: str) -> str:
   return output_text
 
 
+x = input("Enter a prompt: ")
+llmclassifier(x)
