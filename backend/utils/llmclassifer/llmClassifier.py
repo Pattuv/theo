@@ -28,6 +28,6 @@ def llmclassifier(user_input: str) -> str:
   print(output_text)
   return output_text
 
-
-x = input("Enter a prompt: ")
-llmclassifier(x)
+#development scaffolding
+test = input("Enter a prompt: ")
+llmclassifier(test)
