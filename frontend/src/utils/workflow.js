@@ -24,7 +24,9 @@ async function setClickThrough(enabled) {
 }
 
 async function setOutputPlaying(playing) {
-  window.dispatchEvent(new CustomEvent("output-playing-changed", { detail: { playing } }));
+  window.dispatchEvent(
+    new CustomEvent("output-playing-changed", { detail: { playing } }),
+  );
   if (!window.electron?.ipcRenderer?.invoke) return;
   try {
     await window.electron.ipcRenderer.invoke("set-output-playing", { playing });
@@ -71,7 +73,17 @@ async function classifyText(text) {
     const classification = normalizeClassification(data?.classification);
     const raw = data?.raw != null ? String(data.raw) : "";
     // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'workflow.js:classify_done',message:'classify round-trip',data:{classify_ms:Date.now()-_tc0,result:data?.classification},timestamp:Date.now(),hypothesisId:'H-D'})}).catch(()=>{});
+    fetch("http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: "workflow.js:classify_done",
+        message: "classify round-trip",
+        data: { classify_ms: Date.now() - _tc0, result: data?.classification },
+        timestamp: Date.now(),
+        hypothesisId: "H-D",
+      }),
+    }).catch(() => {});
     // #endregion
     return { classification, raw: raw.trim() ? raw : undefined };
   } catch (err) {
@@ -92,7 +104,9 @@ export async function aiGO(text) {
       await setClickThrough(true);
     }
 
-    queueMicrotask(() => window.dispatchEvent(new CustomEvent("ai-loading-start")));
+    queueMicrotask(() =>
+      window.dispatchEvent(new CustomEvent("ai-loading-start")),
+    );
     const rawParam = raw ? `&classifier_raw=${encodeURIComponent(raw)}` : "";
     const url = `${AI_URL}?user_input=${encodeURIComponent(text)}&classification=${encodeURIComponent(classification)}${rawParam}`;
     // #region agent log
@@ -105,8 +119,25 @@ export async function aiGO(text) {
       const _tFetchDone = Date.now();
       try {
         const _body = await response.clone().json();
-        fetch('http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'workflow.js:fetch_done',message:'timing breakdown',data:{frontend_fetch_ms:_tFetchDone-_t0,classification,backend_timings:_body?.timings||null},timestamp:Date.now(),hypothesisId:'H-A,H-B,H-C,H-D'})}).catch(()=>{});
-      } catch(_e) {}
+        fetch(
+          "http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              location: "workflow.js:fetch_done",
+              message: "timing breakdown",
+              data: {
+                frontend_fetch_ms: _tFetchDone - _t0,
+                classification,
+                backend_timings: _body?.timings || null,
+              },
+              timestamp: Date.now(),
+              hypothesisId: "H-A,H-B,H-C,H-D",
+            }),
+          },
+        ).catch(() => {});
+      } catch (_e) {}
       // #endregion
       // Script is finished — end the animation and re-enable mouse input immediately
       // so click-through no longer blocks the Ctrl-key TTS cutoff handler in main.js.
@@ -122,7 +153,20 @@ export async function aiGO(text) {
       // Pressing Ctrl+Win while locked routes to triggerAgentOverrideCancel (intentional cancel).
       await waitForTtsComplete();
       // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'workflow.js:tts_done',message:'TTS playback wait duration',data:{tts_wait_ms:Date.now()-_tTts0},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
+      fetch(
+        "http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            location: "workflow.js:tts_done",
+            message: "TTS playback wait duration",
+            data: { tts_wait_ms: Date.now() - _tTts0 },
+            timestamp: Date.now(),
+            hypothesisId: "H-C",
+          }),
+        },
+      ).catch(() => {});
       // #endregion
     } else {
       const body = await response.text();

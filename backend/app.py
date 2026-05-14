@@ -45,6 +45,7 @@ def _perf_timer() -> float:
     """Return current monotonic time in seconds."""
     return time.perf_counter()
 
+
 # Load .env for keys
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
