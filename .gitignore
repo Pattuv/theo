@@ -96,6 +96,7 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 backend/services/TTS/*.wav
+backend/data/calendar.json
 
 # requests-cache SQLite DB (weather / Open-Meteo), cwd-dependent
 .cache.sqlite

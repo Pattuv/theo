@@ -170,6 +170,30 @@ const App = () => {
     };
   }, []);
 
+  // Lock input while backend delivers a proactive calendar reminder.
+  useEffect(() => {
+    let lockedForReminder = false;
+    const poll = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:5000/tts-status");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.reminder && !lockedForReminder) {
+          lockedForReminder = true;
+          await setInputLock(true);
+        } else if (!data.reminder && lockedForReminder) {
+          lockedForReminder = false;
+          await setInputLock(false);
+        }
+      } catch {
+        /* backend not ready yet */
+      }
+    };
+    const id = setInterval(poll, 500);
+    poll();
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     const playStartup = async () => {
       const soundSrc = getSavedStartupSoundFull() ? startupSound : ping1;

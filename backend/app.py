@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -25,6 +26,15 @@ from utils.audioFeedback.audioFeedback import play_image_error_sound
 from utils.audioFeedback.audioFeedback import play_warning_sound
 from utils.imageProcessor.imageProcessor import image_processor
 from utils.llmclassifer.llmClassifier import llmclassifier
+from utils.tools.calendar.calendar import (
+    build_reminder_speech,
+    get_active_events,
+    get_due_events,
+    get_event_by_id,
+    mark_notified,
+    register_on_events_changed,
+    seconds_until_next_reminder_check,
+)
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -32,13 +42,34 @@ logger = logging.getLogger(__name__)
 # TTS playback state — set True when background TTS starts, False when it ends.
 # Polled by the frontend via /tts-status to know when it's safe to allow next input.
 _tts_playing: bool = False
+_ai_workflow_active: bool = False
+_reminder_delivering: bool = False
 _tts_lock = threading.Lock()
+_event_timers: dict[str, threading.Timer] = {}
+_timers_lock = threading.Lock()
 
 
 def _set_tts_playing(playing: bool) -> None:
     global _tts_playing
     with _tts_lock:
         _tts_playing = playing
+
+
+def _set_ai_workflow_active(active: bool) -> None:
+    global _ai_workflow_active
+    with _tts_lock:
+        _ai_workflow_active = active
+
+
+def _set_reminder_delivering(delivering: bool) -> None:
+    global _reminder_delivering
+    with _tts_lock:
+        _reminder_delivering = delivering
+
+
+def _is_busy() -> bool:
+    with _tts_lock:
+        return _tts_playing or _ai_workflow_active or _reminder_delivering
 
 
 def _perf_timer() -> float:
@@ -97,6 +128,125 @@ def _is_screen_read_query(user_input: str) -> bool:
     return any(p in text for p in patterns)
 
 
+def _has_time_signal(text: str) -> bool:
+    return bool(
+        re.search(r"\d{1,2}[.:]\d{2}\s*(am|pm)?", text, re.IGNORECASE)
+        or re.search(r"\d{1,2}\s*(am|pm)\b", text, re.IGNORECASE)
+        or re.search(r"\bat\s+\d{1,2}\b", text, re.IGNORECASE)
+    )
+
+
+def _is_reminder_set_query(user_input: str) -> bool:
+    text = (user_input or "").strip().lower()
+    set_patterns = (
+        "set a reminder",
+        "set reminder",
+        "remind me",
+        "reminder for",
+        "schedule a reminder",
+        "add a reminder",
+        "create a reminder",
+        "make a reminder",
+        "can you remind me",
+        "could you remind me",
+        "please remind me",
+        "need a reminder",
+    )
+    if not any(p in text for p in set_patterns):
+        return False
+    return _has_time_signal(text)
+
+
+def _is_reminder_delete_query(user_input: str) -> bool:
+    text = (user_input or "").strip().lower()
+    if not any(p in text for p in ("cancel", "delete", "remove")):
+        return False
+    return "reminder" in text or "remind" in text
+
+
+def _is_reminder_update_query(user_input: str) -> bool:
+    text = (user_input or "").strip().lower()
+    if not any(p in text for p in ("change", "update", "move", "reschedule")):
+        return False
+    return ("reminder" in text or "remind" in text) and _has_time_signal(text)
+
+
+def _is_reminder_list_query(user_input: str) -> bool:
+    text = (user_input or "").strip().lower()
+    patterns = (
+        "what reminders",
+        "my reminders",
+        "scheduled reminders",
+        "reminders do i have",
+        "reminders i have",
+        "list reminders",
+        "list my reminders",
+        "any reminders",
+        "upcoming reminders",
+        "reminders are scheduled",
+        "reminders do i",
+        "show reminders",
+        "tell me my reminders",
+        "current reminders",
+        "reminders on my calendar",
+    )
+    return any(p in text for p in patterns)
+
+
+def _calendar_action_allowed(user_input: str, action: str) -> bool:
+    action = action.strip().lower()
+    if action in ("add", "remind", "set"):
+        return _is_reminder_set_query(user_input)
+    if action in ("list", "upcoming"):
+        return _is_reminder_list_query(user_input)
+    if action in ("delete", "remove", "cancel"):
+        return _is_reminder_delete_query(user_input)
+    if action in ("update", "change"):
+        return _is_reminder_update_query(user_input)
+    return False
+
+
+def _filter_calendar_segments(
+    user_input: str, segments: list[tuple[str, ...]]
+) -> list[tuple[str, ...]]:
+    """Drop calendar tool segments unless user intent clearly matches."""
+    filtered: list[tuple[str, ...]] = []
+    for seg in segments:
+        if not seg or seg[0].strip().lower() != "calendar":
+            filtered.append(seg)
+            continue
+        action = seg[1].strip().lower() if len(seg) > 1 else ""
+        if _calendar_action_allowed(user_input, action):
+            filtered.append(seg)
+        else:
+            logger.info(
+                "Stripped calendar segment (no matching intent): action=%s input=%r",
+                action,
+                user_input[:120],
+            )
+    return filtered
+
+
+def _has_calendar_list_segment(segments: list[tuple[str, ...]]) -> bool:
+    for seg in segments:
+        if not seg:
+            continue
+        if seg[0].strip().lower() != "calendar":
+            continue
+        action = seg[1].strip().lower() if len(seg) > 1 else ""
+        if action in ("list", "upcoming"):
+            return True
+    return False
+
+
+def _ensure_calendar_list_segment(
+    user_input: str, segments: list[tuple[str, ...]]
+) -> list[tuple[str, ...]]:
+    if _is_reminder_list_query(user_input) and not _has_calendar_list_segment(segments):
+        return [*segments, ("calendar", "list")]
+    return segments
+
+
 def _build_datetime_response() -> str:
     now = datetime.now()
     return (
@@ -119,6 +269,99 @@ def _trim_memory() -> None:
     global SESSION_MEMORY
     if len(SESSION_MEMORY) > MAX_MEMORY_TURNS:
         SESSION_MEMORY[:] = SESSION_MEMORY[-MAX_MEMORY_TURNS:]
+
+
+def _deliver_event(event: dict) -> None:
+    """Speak one reminder event if Theo is idle."""
+    if _is_busy():
+        return
+    if event.get("notified"):
+        return
+
+    speech = build_reminder_speech(event)
+    _set_reminder_delivering(True)
+    _set_tts_playing(True)
+    try:
+        speak_text(speech, async_play=False)
+        mark_notified(event["id"])
+        _cancel_event_timer(event["id"])
+        logger.info("Delivered reminder: %s", event.get("title"))
+    except Exception:
+        logger.exception("Reminder delivery failed")
+    finally:
+        _set_tts_playing(False)
+        _set_reminder_delivering(False)
+
+
+def _deliver_due_reminder() -> None:
+    """Speak the next due reminder if Theo is idle."""
+    if _is_busy():
+        return
+    due = get_due_events()
+    if not due:
+        return
+    _deliver_event(due[0])
+
+
+def _deliver_event_by_id(event_id: str) -> None:
+    event = get_event_by_id(event_id)
+    if not event:
+        return
+    _deliver_event(event)
+
+
+def _cancel_event_timer(event_id: str) -> None:
+    with _timers_lock:
+        timer = _event_timers.pop(event_id, None)
+    if timer:
+        timer.cancel()
+
+
+def _schedule_event_timer(event: dict) -> None:
+    event_id = event.get("id")
+    if not event_id or event.get("notified"):
+        return
+    try:
+        starts_at = datetime.fromisoformat(event["starts_at"])
+    except (KeyError, ValueError):
+        return
+
+    delay = (starts_at - datetime.now()).total_seconds()
+    _cancel_event_timer(event_id)
+    if delay <= 0:
+        return
+
+    def _fire() -> None:
+        try:
+            _deliver_event_by_id(event_id)
+        except Exception:
+            logger.exception("Scheduled reminder failed for %s", event_id)
+
+    timer = threading.Timer(delay, _fire)
+    timer.daemon = True
+    with _timers_lock:
+        _event_timers[event_id] = timer
+    timer.start()
+    logger.debug("Scheduled reminder %s in %.2fs", event.get("title"), delay)
+
+
+def _reschedule_all_event_timers() -> None:
+    with _timers_lock:
+        for timer in _event_timers.values():
+            timer.cancel()
+        _event_timers.clear()
+    for event in get_active_events():
+        _schedule_event_timer(event)
+
+
+def _reminder_loop() -> None:
+    """Fallback poll using local device clock (catches sleep/wake and busy deferrals)."""
+    while True:
+        try:
+            _deliver_due_reminder()
+        except Exception:
+            logger.exception("Reminder loop error")
+        time.sleep(seconds_until_next_reminder_check())
 
 
 def aiGO(user_input: str, classification: str, tool_context: str | None = None) -> dict:
@@ -345,12 +588,19 @@ def ai():
         play_warning_sound(blocking=True)
         return jsonify({"ok": False, "classification": classification}), 400
 
+    tool_segments = _filter_calendar_segments(user_input, tool_segments)
+    tool_segments = _ensure_calendar_list_segment(user_input, tool_segments)
+
     if classification in ("---CHAT---", "---AGENT---"):
         t_tools = _perf_timer()
         tool_context = run_tool_segments(tool_segments) if tool_segments else None
         tools_ms = round((_perf_timer() - t_tools) * 1000) if tool_segments else None
 
-        result = aiGO(user_input, classification, tool_context=tool_context)
+        _set_ai_workflow_active(True)
+        try:
+            result = aiGO(user_input, classification, tool_context=tool_context)
+        finally:
+            _set_ai_workflow_active(False)
         if result.get("ok"):
             payload = {
                 "ok": True,
@@ -382,6 +632,7 @@ def ai():
 def stop_tts():
     """Stop current TTS playback (called when user interrupts with Ctrl+Win)."""
     stop_playback()
+    _set_tts_playing(False)
     return jsonify({"ok": True}), 200
 
 
@@ -389,7 +640,10 @@ def stop_tts():
 def tts_status():
     """Poll whether TTS is currently playing. Frontend holds input lock until this returns false."""
     with _tts_lock:
-        return jsonify({"playing": _tts_playing}), 200
+        return jsonify({
+            "playing": _tts_playing,
+            "reminder": _reminder_delivering,
+        }), 200
 
 
 @app.route("/shutdown", methods=["POST"])
@@ -422,11 +676,20 @@ def _launch_electron():
         logger.exception("Failed to launch Electron: %s", e)
 
 
+def _startup_reminder_sync() -> None:
+    time.sleep(3)
+    _deliver_due_reminder()
+
+
 if __name__ == "__main__":
     # Only launch Electron once: in the reloader child when debug=True, or always when debug=False.
     # Flask debug mode runs the script twice (parent + child); we must not spawn from the parent.
     _debug = True
     _is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     if _is_reloader_child or not _debug:
+        register_on_events_changed(_reschedule_all_event_timers)
+        _reschedule_all_event_timers()
         threading.Thread(target=_launch_electron, daemon=True).start()
+        threading.Thread(target=_reminder_loop, daemon=True).start()
+        threading.Thread(target=_startup_reminder_sync, daemon=True).start()
     app.run(host="127.0.0.1", port=5000, debug=_debug)

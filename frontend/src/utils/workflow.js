@@ -16,7 +16,6 @@ async function setInputLock(lock) {
 async function setClickThrough(enabled) {
   if (!window.electron?.setClickThrough) return;
   try {
-    // remove lock down for ai runs
     await window.electron.setClickThrough(enabled, true);
   } catch (err) {
     console.error("[AI] Failed to set click-through:", err);
@@ -59,9 +58,7 @@ function normalizeClassification(raw) {
 }
 
 async function classifyText(text) {
-  // #region agent log
   const _tc0 = Date.now();
-  // #endregion
   try {
     const classifyRes = await fetch(
       `${CLASSIFY_URL}?user_input=${encodeURIComponent(text)}`,
@@ -72,7 +69,6 @@ async function classifyText(text) {
     const data = await classifyRes.json();
     const classification = normalizeClassification(data?.classification);
     const raw = data?.raw != null ? String(data.raw) : "";
-    // #region agent log
     fetch("http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -84,10 +80,8 @@ async function classifyText(text) {
         hypothesisId: "H-D",
       }),
     }).catch(() => {});
-    // #endregion
     return { classification, raw: raw.trim() ? raw : undefined };
   } catch (err) {
-    // Fail-safe: never default to AGENT on classifier failures.
     console.error("[AI] Classification failed, defaulting to CHAT:", err);
     return { classification: "---CHAT---", raw: undefined };
   }
@@ -109,13 +103,9 @@ export async function aiGO(text) {
     );
     const rawParam = raw ? `&classifier_raw=${encodeURIComponent(raw)}` : "";
     const url = `${AI_URL}?user_input=${encodeURIComponent(text)}&classification=${encodeURIComponent(classification)}${rawParam}`;
-    // #region agent log
     const _t0 = Date.now();
-    const _tClassify = _t0; // classify already done above
-    // #endregion
     const response = await fetch(url);
     if (response.ok) {
-      // #region agent log
       const _tFetchDone = Date.now();
       try {
         const _body = await response.clone().json();
@@ -138,21 +128,13 @@ export async function aiGO(text) {
           },
         ).catch(() => {});
       } catch (_e) {}
-      // #endregion
-      // Script is finished — end the animation and re-enable mouse input immediately
-      // so click-through no longer blocks the Ctrl-key TTS cutoff handler in main.js.
       if (classification === "---AGENT---") {
         window.dispatchEvent(new CustomEvent("ai-script-done"));
         await setClickThrough(false);
       }
       await setOutputPlaying(true);
-      // #region agent log
       const _tTts0 = Date.now();
-      // #endregion
-      // Keep input locked until TTS finishes — prevents Ctrl+Win spam during playback.
-      // Pressing Ctrl+Win while locked routes to triggerAgentOverrideCancel (intentional cancel).
       await waitForTtsComplete();
-      // #region agent log
       fetch(
         "http://127.0.0.1:7243/ingest/b0115b3f-3b50-439f-acd0-e9708e2326d8",
         {
@@ -167,7 +149,6 @@ export async function aiGO(text) {
           }),
         },
       ).catch(() => {});
-      // #endregion
     } else {
       const body = await response.text();
       console.error("[AI] Request failed:", response.status, body);

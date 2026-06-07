@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from utils.tools.calendar.calendar import run_calendar
 from utils.tools.weather.weather import getWeather
 
 logger = logging.getLogger(__name__)
@@ -126,7 +127,9 @@ def call_tool_segment(segment: tuple[str, ...]) -> str:
         return (
             f'Weather tool: place="{place}", temperature_f={temp_f:.1f}, condition="{qualitative}".'
         )
-    logger.warning("Unknown tool in segment (allowed: weather): %s", segment)
+    if name == "calendar":
+        return run_calendar(segment)
+    logger.warning("Unknown tool in segment (allowed: weather, calendar): %s", segment)
     return ""
 
 
