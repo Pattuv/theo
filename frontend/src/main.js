@@ -26,6 +26,11 @@ import started from "electron-squirrel-startup";
 const require = createRequire(import.meta.url);
 const { uIOhook, UiohookKey } = require("uiohook-napi");
 
+const getAppIconPath = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, "icon.ico")
+    : path.join(__dirname, "../../src/assets/icon.ico");
+
 let mainWindowRef = null;
 let inputLockCount = 0;
 let clickThroughEnabled = false;
@@ -316,6 +321,7 @@ const createWindow = () => {
   const mainWindow = new BrowserWindow({
     width,
     height,
+    icon: getAppIconPath(),
     frame: false,
     transparent: true,
     backgroundColor: "#00000000",

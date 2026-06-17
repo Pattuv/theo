@@ -1,9 +1,14 @@
+const path = require("node:path");
 const { FusesPlugin } = require("@electron-forge/plugin-fuses");
 const { FuseV1Options, FuseVersion } = require("@electron/fuses");
+
+const appIcon = path.resolve(__dirname, "src/assets/icon.ico");
 
 module.exports = {
   packagerConfig: {
     asar: true,
+    icon: appIcon,
+    extraResource: [appIcon],
   },
   // uiohook-napi ships N-API prebuilts (prebuilds/win32-x64/uiohook-napi.node).
   // node-gyp-build loads them at runtime without compilation.
@@ -14,7 +19,9 @@ module.exports = {
   makers: [
     {
       name: "@electron-forge/maker-squirrel",
-      config: {},
+      config: {
+        setupIcon: appIcon,
+      },
     },
     {
       name: "@electron-forge/maker-zip",

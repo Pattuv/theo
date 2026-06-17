@@ -32,6 +32,10 @@ body {
   letter-spacing: -1px;
 }
 
+:where(h1, h2, h3, h4, h5, h6).bric {
+  letter-spacing: -0.06em;
+}
+
 .inter {
   font-family: "Inter", sans-serif;
   letter-spacing: -0.025em;

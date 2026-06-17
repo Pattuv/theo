@@ -1,6 +1,6 @@
 {
-  "name": "Theo",
-  "productName": "Theo.ai",
+  "name": "theo-windows",
+  "productName": "Theo",
   "version": "1.4.2",
   "description": "Your friendly desktop accessibility assistant",
   "main": ".vite/build/main.js",
