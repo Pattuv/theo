@@ -1,8 +1,8 @@
 {
-  "name": "my-app",
-  "productName": "my-app",
-  "version": "1.0.0",
-  "description": "My Electron application description",
+  "name": "Theo",
+  "productName": "Theo.ai",
+  "version": "1.4.2",
+  "description": "Your friendly desktop accessibility assistant",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
