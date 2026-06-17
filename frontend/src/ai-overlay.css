@@ -6,8 +6,8 @@
 
 .ai-active-overlay {
   --clr-3: #8a2be2;
-  --clr-4: #b19cd9;
-  --clr-5: #d8b6ff;
+  --clr-4: #b993ff;
+  --clr-5: #e2c9ff;
   --border-thickness: 10px;
   position: fixed;
   inset: 0;
@@ -43,7 +43,7 @@
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   animation: rotation 4s linear infinite;
-  filter: saturate(1.5) brightness(1.3);
+  filter: saturate(1.1) brightness(1.05);
 }
 
 @keyframes rotation {
