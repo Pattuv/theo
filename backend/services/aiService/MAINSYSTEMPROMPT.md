@@ -38,6 +38,7 @@ You must generate **two outputs**:
 
      **Preset templates**:
      - **Open app:** press Windows key → type app name → press Enter.
+       \*\*IF ATTEMPTING OPENING CHROME, BE SURE TO CLICK ON A CHROME PROFILE AS WELL.
      - **Navigate to website:** press Ctrl+L to focus the browser address bar → type the full URL → press Enter.
      - **Close window:** interact with UI close button, do not use `Alt+F4`.
      - **Type text:** focus input area → type characters → optionally press Enter.
