@@ -60,5 +60,5 @@ OPENAI_API_KEY=your_openai_key
 
 ## License
 
-© 2025 Theo.ai All rights reserved.  
-This project is licensed under the MIT License. See the LICENSE file for details.
+© 2026 Theo.ai All rights reserved.  
+This project is licensed under the GPL-3.0 License. See the LICENSE file for details.
