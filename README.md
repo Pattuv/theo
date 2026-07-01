@@ -1,6 +1,6 @@
 # Theo.ai: Partial Blindness Accessibility Agent
 
-Theo.ai v.1.4.1 | modular tool support, weather tool available (Stable)
+Theo.ai v.1.4.3 | added calendar and efficiency upgrades (Stable)
 
 [Official Documentation](https://theodocs.super.site)
 
